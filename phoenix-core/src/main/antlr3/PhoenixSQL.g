@@ -82,6 +82,10 @@ tokens
     CONSTRAINT='constraint';
     TABLES='tables';
     ALL='all';
+    CDC='cdc';
+    PRE='pre';
+    POST='post';
+    LATEST='latest';
     INDEX='index';
     INCLUDE='include';
     WITHIN='within';
@@ -187,6 +191,8 @@ import java.lang.Boolean;
 import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Stack;
 import java.sql.SQLException;
 import org.apache.phoenix.expression.function.CountAggregateFunction;
@@ -201,6 +207,7 @@ import org.apache.phoenix.schema.IllegalDataException;
 import org.apache.phoenix.schema.PIndexState;
 import org.apache.phoenix.schema.PTableType;
 import org.apache.phoenix.schema.PTable.IndexType;
+import org.apache.phoenix.schema.PTable.CDCChangeScope;
 import org.apache.phoenix.schema.stats.StatisticsCollectionScope;
 import org.apache.phoenix.schema.types.PDataType;
 import org.apache.phoenix.schema.types.PDate;
@@ -428,6 +435,7 @@ oneStatement returns [BindableStatement ret]
     |   s=cursor_close_node
     |   s=cursor_fetch_node
     |   s=declare_cursor_node
+    |   s=create_cdc_node
     |   s=drop_table_node
     |   s=drop_index_node
     |   s=alter_index_node
@@ -544,6 +552,40 @@ create_index_node returns [CreateIndexStatement ret]
                     UDFParseNode>(udfParseNodes));
         }
     ;
+
+create_cdc_node returns [CreateCDCStatement ret]
+	:	CREATE CDC (IF NOT ex=EXISTS)? o=cdc_name ON t=from_table_name
+        LPAREN (tcol=column_name | tfunc=cdc_time_func) RPAREN
+        (INCLUDE LPAREN v=cdc_change_scopes RPAREN)?
+        (p=fam_properties)?
+        {
+            ret = factory.createCDC(o, t, tcol, tfunc, v, p, ex != null, getBindCount());
+        }
+    ;
+
+cdc_name returns [NamedNode ret]
+    :   name=identifier {$ret = factory.cdcName(name); }
+    ;
+
+cdc_time_func returns [FunctionParseNode ret]
+    :   field=identifier LPAREN l=zero_or_more_expressions RPAREN
+        {
+            ret = factory.function(field, l);
+        }
+    ;
+
+cdc_change_scopes returns [Set<CDCChangeScope> ret]
+@init { ret = new HashSet<>(); }
+    :   v=cdc_change_scope { $ret.add(v); } ( COMMA v=cdc_change_scope { $ret.add(v); } )*
+    ;
+
+cdc_change_scope returns [CDCChangeScope ret]
+    :   v=(PRE | POST | LATEST | ALL)
+        {
+            ret = CDCChangeScope.valueOf(v.getText().toUpperCase());
+        }
+    ;
+
 
 // Parse a create sequence statement.
 create_sequence_node returns [CreateSequenceStatement ret]
