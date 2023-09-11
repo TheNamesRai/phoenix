@@ -438,6 +438,7 @@ oneStatement returns [BindableStatement ret]
     |   s=create_cdc_node
     |   s=drop_table_node
     |   s=drop_index_node
+    |   s=drop_cdc_node
     |   s=alter_index_node
     |   s=alter_table_node
     |   s=show_node
@@ -679,6 +680,11 @@ drop_schema_node returns [DropSchemaStatement ret]
         {ret = factory.dropSchema(s, ex!=null, c!=null); }
     ;
 
+// Parse a drop CDC statement
+drop_cdc_node returns [DropCDCStatement ret]
+   : DROP CDC (IF ex=EXISTS)? o=cdc_name ON t=from_table_name
+     {ret = factory.dropCDC(o, t, ex!=null); }
+   ;
 
 // Parse a drop index statement
 drop_index_node returns [DropIndexStatement ret]

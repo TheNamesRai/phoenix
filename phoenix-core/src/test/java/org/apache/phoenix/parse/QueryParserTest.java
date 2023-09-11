@@ -546,6 +546,20 @@ public class QueryParserTest {
         parseInvalidCreateCDC("create cdc foo bar(ts1, ts2)", SQLExceptionCode.MISSING_TOKEN.getErrorCode());
     }
 
+    private DropCDCStatement parseDropCDCSimple(String sql, boolean ifNotExists) throws Exception {
+        DropCDCStatement stmt = parseQuery(sql, DropCDCStatement.class);
+        assertEquals("FOO", stmt.getCdcObjName().getName());
+        assertEquals("BAR", stmt.getTableName().getTableName());
+        return stmt;
+    }
+    @Test
+    public void testDropCDCSimple() throws Exception {
+        DropCDCStatement stmt = null;
+        stmt = parseDropCDCSimple("drop cdc foo on bar", false);
+        assertEquals("BAR", stmt.getTableName().getTableName());
+        assertEquals("FOO", stmt.getCdcObjName().getName());
+    }
+
     @Test
     public void testInvalidTrailingCommaOnCreateTable() throws Exception {
         String sql = (

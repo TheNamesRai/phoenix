@@ -121,67 +121,7 @@ import org.apache.phoenix.log.QueryLoggerUtil;
 import org.apache.phoenix.log.QueryStatus;
 import org.apache.phoenix.monitoring.TableMetricsManager;
 import org.apache.phoenix.optimize.Cost;
-import org.apache.phoenix.parse.AddColumnStatement;
-import org.apache.phoenix.parse.AddJarsStatement;
-import org.apache.phoenix.parse.AliasedNode;
-import org.apache.phoenix.parse.AlterIndexStatement;
-import org.apache.phoenix.parse.AlterSessionStatement;
-import org.apache.phoenix.parse.BindableStatement;
-import org.apache.phoenix.parse.ChangePermsStatement;
-import org.apache.phoenix.parse.CloseStatement;
-import org.apache.phoenix.parse.ColumnDef;
-import org.apache.phoenix.parse.ColumnName;
-import org.apache.phoenix.parse.CreateCDCStatement;
-import org.apache.phoenix.parse.CreateFunctionStatement;
-import org.apache.phoenix.parse.CreateIndexStatement;
-import org.apache.phoenix.parse.CreateSchemaStatement;
-import org.apache.phoenix.parse.CreateSequenceStatement;
-import org.apache.phoenix.parse.CreateTableStatement;
-import org.apache.phoenix.parse.CursorName;
-import org.apache.phoenix.parse.DMLStatement;
-import org.apache.phoenix.parse.DeclareCursorStatement;
-import org.apache.phoenix.parse.DeleteJarStatement;
-import org.apache.phoenix.parse.DeleteStatement;
-import org.apache.phoenix.parse.ExplainType;
-import org.apache.phoenix.parse.FunctionParseNode;
-import org.apache.phoenix.parse.ShowCreateTableStatement;
-import org.apache.phoenix.parse.ShowCreateTable;
-import org.apache.phoenix.parse.DropColumnStatement;
-import org.apache.phoenix.parse.DropFunctionStatement;
-import org.apache.phoenix.parse.DropIndexStatement;
-import org.apache.phoenix.parse.DropSchemaStatement;
-import org.apache.phoenix.parse.DropSequenceStatement;
-import org.apache.phoenix.parse.DropTableStatement;
-import org.apache.phoenix.parse.ExecuteUpgradeStatement;
-import org.apache.phoenix.parse.ExplainStatement;
-import org.apache.phoenix.parse.FetchStatement;
-import org.apache.phoenix.parse.FilterableStatement;
-import org.apache.phoenix.parse.HintNode;
-import org.apache.phoenix.parse.IndexKeyConstraint;
-import org.apache.phoenix.parse.LimitNode;
-import org.apache.phoenix.parse.ListJarsStatement;
-import org.apache.phoenix.parse.LiteralParseNode;
-import org.apache.phoenix.parse.MutableStatement;
-import org.apache.phoenix.parse.NamedNode;
-import org.apache.phoenix.parse.NamedTableNode;
-import org.apache.phoenix.parse.OffsetNode;
-import org.apache.phoenix.parse.OpenStatement;
-import org.apache.phoenix.parse.OrderByNode;
-import org.apache.phoenix.parse.PFunction;
-import org.apache.phoenix.parse.ParseNode;
-import org.apache.phoenix.parse.ParseNodeFactory;
-import org.apache.phoenix.parse.PrimaryKeyConstraint;
-import org.apache.phoenix.parse.SQLParser;
-import org.apache.phoenix.parse.SelectStatement;
-import org.apache.phoenix.parse.ShowSchemasStatement;
-import org.apache.phoenix.parse.ShowTablesStatement;
-import org.apache.phoenix.parse.TableName;
-import org.apache.phoenix.parse.TableNode;
-import org.apache.phoenix.parse.TraceStatement;
-import org.apache.phoenix.parse.UDFParseNode;
-import org.apache.phoenix.parse.UpdateStatisticsStatement;
-import org.apache.phoenix.parse.UpsertStatement;
-import org.apache.phoenix.parse.UseSchemaStatement;
+import org.apache.phoenix.parse.*;
 import org.apache.phoenix.query.HBaseFactoryProvider;
 import org.apache.phoenix.query.KeyRange;
 import org.apache.phoenix.query.QueryConstants;
@@ -1533,6 +1473,19 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
         }
     }
 
+    private static class ExecutableDropCDCStatement extends DropCDCStatement implements CompilableStatement {
+
+        public ExecutableDropCDCStatement(NamedNode cdcObjName, TableName tableName, boolean ifExists) {
+            super(cdcObjName, tableName, ifExists);
+        }
+
+        @SuppressWarnings("unchecked")
+        @Override
+        public MutationPlan compilePlan(final PhoenixStatement stmt, Sequence.ValueOp seqAction) throws SQLException {
+            return null;
+        }
+    }
+
     private static class ExecutableDropIndexStatement extends DropIndexStatement implements CompilableStatement {
 
         public ExecutableDropIndexStatement(NamedNode indexName, TableName tableName, boolean ifExists) {
@@ -1927,7 +1880,12 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
         public DropFunctionStatement dropFunction(String functionName, boolean ifExists) {
             return new ExecutableDropFunctionStatement(functionName, ifExists);
         }
-        
+
+        @Override
+        public DropCDCStatement dropCDC(NamedNode cdcObjName, TableName tableName, boolean ifExists) {
+            return new ExecutableDropCDCStatement(cdcObjName, tableName, ifExists);
+        }
+
         @Override
         public DropIndexStatement dropIndex(NamedNode indexName, TableName tableName, boolean ifExists) {
             return new ExecutableDropIndexStatement(indexName, tableName, ifExists);
