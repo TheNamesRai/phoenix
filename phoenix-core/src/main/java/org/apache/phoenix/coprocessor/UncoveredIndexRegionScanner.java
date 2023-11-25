@@ -59,6 +59,7 @@ import java.util.Map;
 
 import static org.apache.phoenix.coprocessor.BaseScannerRegionObserver.EMPTY_COLUMN_FAMILY_NAME;
 import static org.apache.phoenix.coprocessor.BaseScannerRegionObserver.EMPTY_COLUMN_QUALIFIER_NAME;
+import static org.apache.phoenix.coprocessor.GlobalIndexRegionScanner.adjustScanFilter;
 import static org.apache.phoenix.query.QueryServices.INDEX_PAGE_SIZE_IN_ROWS;
 import static org.apache.phoenix.util.ScanUtil.getDummyResult;
 import static org.apache.phoenix.util.ScanUtil.isDummy;

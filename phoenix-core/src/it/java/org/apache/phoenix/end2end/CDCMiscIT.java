@@ -22,21 +22,16 @@ import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.schema.TableProperty;
 import org.apache.phoenix.util.CDCUtil;
+import org.apache.phoenix.util.EnvironmentEdgeManager;
 import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.SchemaUtil;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Properties;
-import java.util.Set;
+import java.sql.*;
+import java.util.*;
 
+import static org.apache.phoenix.end2end.index.GlobalIndexCheckerIT.assertExplainPlan;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -55,7 +50,7 @@ public class CDCMiscIT extends ParallelStatsDisabledIT {
         try (ResultSet rs = conn.createStatement().executeQuery("SELECT index_type FROM " +
                 "system.catalog WHERE table_name = '" + CDCUtil.getCDCIndexName(cdcName) +
                 "' AND column_name IS NULL and column_family IS NULL")) {
-                assertEquals(true, rs.next());
+            assertEquals(true, rs.next());
             assertEquals(idxType, rs.getInt(1));
         }
     }
@@ -99,7 +94,7 @@ public class CDCMiscIT extends ParallelStatsDisabledIT {
 
         try {
             conn.createStatement().execute("CREATE CDC " + cdcName
-                    + " ON " + tableName +"(UNKNOWN_FUNCTION())");
+                    + " ON " + tableName + "(UNKNOWN_FUNCTION())");
             fail("Expected to fail due to invalid function");
         } catch (SQLException e) {
             assertEquals(SQLExceptionCode.FUNCTION_UNDEFINED.getErrorCode(), e.getErrorCode());
@@ -107,7 +102,7 @@ public class CDCMiscIT extends ParallelStatsDisabledIT {
 
         try {
             conn.createStatement().execute("CREATE CDC " + cdcName
-                    + " ON " + tableName +"(NOW())");
+                    + " ON " + tableName + "(NOW())");
             fail("Expected to fail due to non-deterministic function");
         } catch (SQLException e) {
             assertEquals(SQLExceptionCode.NON_DETERMINISTIC_EXPRESSION_NOT_ALLOWED_IN_INDEX.
@@ -116,7 +111,7 @@ public class CDCMiscIT extends ParallelStatsDisabledIT {
 
         try {
             conn.createStatement().execute("CREATE CDC " + cdcName
-                    + " ON " + tableName +"(ROUND(v1))");
+                    + " ON " + tableName + "(ROUND(v1))");
             fail("Expected to fail due to non-timestamp expression in the index PK");
         } catch (SQLException e) {
             assertEquals(SQLExceptionCode.INCORRECT_DATATYPE_FOR_EXPRESSION.getErrorCode(),
@@ -125,7 +120,7 @@ public class CDCMiscIT extends ParallelStatsDisabledIT {
 
         try {
             conn.createStatement().execute("CREATE CDC " + cdcName
-                    + " ON " + tableName +"(v1)");
+                    + " ON " + tableName + "(v1)");
             fail("Expected to fail due to non-timestamp column in the index PK");
         } catch (SQLException e) {
             assertEquals(SQLExceptionCode.INCORRECT_DATATYPE_FOR_EXPRESSION.getErrorCode(),
@@ -168,8 +163,7 @@ public class CDCMiscIT extends ParallelStatsDisabledIT {
             conn.createStatement().execute("CREATE CDC " + cdcName + " ON " + viewName +
                     "(PHOENIX_ROW_TIMESTAMP())");
             fail("Expected to fail on VIEW");
-        }
-        catch(SQLException e) {
+        } catch (SQLException e) {
             assertEquals(SQLExceptionCode.INVALID_TABLE_TYPE_FOR_CDC.getErrorCode(),
                     e.getErrorCode());
             assertTrue(e.getMessage().endsWith(
@@ -207,5 +201,55 @@ public class CDCMiscIT extends ParallelStatsDisabledIT {
         assertEquals(" PHOENIX_ROW_TIMESTAMP()", cdcPkColumns.get(0).getName().getString());
         assertEquals("TENANTID", cdcPkColumns.get(1).getName().getString());
         assertEquals("K", cdcPkColumns.get(2).getName().getString());
+    }
+
+    @Test
+    public void testUncoveredQueryWithPhoenixRowTimestamp() throws Exception {
+        try (Connection conn = DriverManager.getConnection(getUrl())) {
+            String dataTableName = generateUniqueName();
+            String indexTableName = generateUniqueName();
+            Timestamp initial = new Timestamp(EnvironmentEdgeManager.currentTimeMillis() - 1);
+            conn.createStatement().execute("create table " + dataTableName +
+                    " (id varchar(10) not null primary key, val1 varchar(10), val2 varchar(10), " +
+                    " val3 varchar(10))");
+            Timestamp before = new Timestamp(EnvironmentEdgeManager.currentTimeMillis());
+            // Sleep 1ms to get a different row timestamps
+            conn.createStatement().execute("CREATE UNCOVERED INDEX " + indexTableName
+                    + " on " + dataTableName + " (PHOENIX_ROW_TIMESTAMP()) ");
+            Thread.sleep(1);
+            conn.createStatement().execute("upsert into " + dataTableName + " values ('a', 'ab', 'abc', 'abcd')");
+            conn.commit();
+
+            conn.createStatement().execute("upsert into " + dataTableName + " values ('b', 'bc', 'bcd', 'bcde')");
+            conn.createStatement().execute("upsert into " + dataTableName + " values ('c', 'cd', 'cde', 'cdef')");
+            conn.createStatement().execute("upsert into " + dataTableName + " values ('d', 'de', 'def', 'defg')");
+            Thread.sleep(10);
+            conn.createStatement().execute("upsert into " + dataTableName + " values ('d', 'de2', 'def2', 'defg2')");
+            conn.createStatement().execute("upsert into " + dataTableName + " values ('a', 'ab2', 'abc2', 'abcd2')");
+
+            Thread.sleep(10);
+            conn.createStatement().execute("upsert into " + dataTableName + " values ('a', 'ab3', 'abc3', 'abcd3')");
+            conn.createStatement().execute("upsert into " + dataTableName + " values ('a', 'ab4', 'abc4', 'abcd4')");
+            conn.commit();
+            Timestamp after = new Timestamp(EnvironmentEdgeManager.currentTimeMillis() + 1);
+
+            String timeZoneID = Calendar.getInstance().getTimeZone().getID();
+            // Write a query to get the val2 = 'bc' with a time range query
+            String query = "SELECT /*+ INDEX(" + dataTableName + " " + indexTableName + ") */"
+                    + "* from " + dataTableName;
+            // Verify that we will read from the index table
+            ResultSet rs = conn.createStatement().executeQuery(query);
+            assertTrue(rs.next());
+            assertEquals("a", rs.getString(1));
+            assertEquals("ab", rs.getString(2));
+
+            assertTrue(rs.next());
+            assertEquals("b", rs.getString(1));
+            assertEquals("bc", rs.getString(2));
+
+            assertTrue(rs.next());
+            assertEquals("b", rs.getString(1));
+            assertEquals("bc", rs.getString(2));
+        }
     }
 }

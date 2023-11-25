@@ -22,6 +22,7 @@ import static org.apache.phoenix.coprocessor.ScanRegionObserver.WILDCARD_SCAN_IN
 import static org.apache.phoenix.schema.types.PDataType.TRUE_BYTES;
 
 import org.apache.hadoop.hbase.CellUtil;
+import org.apache.phoenix.coprocessor.CDCGlobalIndexRegionScanner;
 import org.apache.phoenix.coprocessor.UncoveredGlobalIndexRegionScanner;
 import org.apache.phoenix.coprocessor.UncoveredLocalIndexRegionScanner;
 import org.apache.phoenix.schema.KeyValueSchema;
@@ -134,7 +135,80 @@ public abstract class RegionScannerFactory {
 
       {
           // for indexes construct the row filter for uncovered columns if it exists
-          if (ScanUtil.isLocalOrUncoveredGlobalIndex(scan)) {
+          if (true) {
+            scan.setRaw(true);
+            scan.readAllVersions();
+            //scan.getFamilyMap().clear();
+            scan.setCacheBlocks(false);
+            byte[] expBytes = scan.getAttribute(BaseScannerRegionObserver.INDEX_FILTER);
+            if (expBytes == null) {
+              // For older clients
+              expBytes = scan.getAttribute(BaseScannerRegionObserver.LOCAL_INDEX_FILTER);
+            }
+            if (expBytes != null) {
+              try {
+                ByteArrayInputStream stream = new ByteArrayInputStream(expBytes);
+                DataInputStream input = new DataInputStream(stream);
+                extraWhere = ExpressionType.values()[WritableUtils.readVInt(input)].newInstance();
+                extraWhere.readFields(input);
+              } catch (IOException io) {
+                // should not happen since we're reading from a byte[]
+                throw new RuntimeException(io);
+              }
+            }
+            byte[] limitBytes = scan.getAttribute(BaseScannerRegionObserver.INDEX_LIMIT);
+            if (limitBytes == null) {
+              // For older clients
+              limitBytes = scan.getAttribute(BaseScannerRegionObserver.LOCAL_INDEX_LIMIT);
+            }
+            if (limitBytes != null) {
+              extraLimit = Bytes.toLong(limitBytes);
+            }
+            if (ScanUtil.isLocalOrUncoveredGlobalIndex(scan)
+                    && (tupleProjector != null
+                    || (indexMaintainer != null && indexMaintainer.isUncovered()))) {
+
+              PTable.ImmutableStorageScheme storageScheme =
+                      indexMaintainer.getIndexStorageScheme();
+              Scan dataTableScan = new Scan();
+              dataTableScan.setRaw(true);
+              dataTableScan.readAllVersions();
+              dataTableScan.getFamilyMap().clear();
+              dataTableScan.setCacheBlocks(false);
+              for (byte[] family : scan.getFamilyMap().keySet()) {
+                dataTableScan.addFamily(family);
+              }
+              s = new CDCGlobalIndexRegionScanner(regionScanner, dataRegion, scan, env,
+                      dataTableScan, tupleProjector, indexMaintainer, viewConstants, ptr,
+                      pageSizeMs, extraLimit);
+//              if (dataColumns != null) {
+//                for (int i = 0; i < dataColumns.length; i++) {
+//                  if (storageScheme ==
+//                          PTable.ImmutableStorageScheme.SINGLE_CELL_ARRAY_WITH_OFFSETS) {
+//                    dataTableScan.addFamily(dataColumns[i].getFamily());
+//                  } else {
+//                    dataTableScan.addColumn(dataColumns[i].getFamily(),
+//                            dataColumns[i].getQualifier());
+//                  }
+//                }
+//              } else if (indexMaintainer.isUncovered()) {
+//                // Indexed columns and the columns in index where clause should also be added
+//                // to the data columns to scan for uncovered global indexes. This is required
+//                // to verify the index row against the data table row.
+//                for (ColumnReference column : indexMaintainer.getAllColumnsForDataTable()) {
+//                  dataTableScan.addColumn(column.getFamily(), column.getQualifier());
+//                }
+//              }
+//              if (ScanUtil.isLocalIndex(scan)) {
+//                s = new UncoveredLocalIndexRegionScanner(regionScanner, dataRegion, scan, env,
+//                        dataTableScan, tupleProjector, indexMaintainer, viewConstants, ptr,
+//                        pageSizeMs, offset, actualStartKey, extraLimit);
+//              } else {
+
+//              }
+            }
+          }
+          else if (ScanUtil.isLocalOrUncoveredGlobalIndex(scan)) {
               byte[] expBytes = scan.getAttribute(BaseScannerRegionObserver.INDEX_FILTER);
               if (expBytes == null) {
                   // For older clients
