@@ -18,6 +18,8 @@
 package org.apache.phoenix.end2end;
 
 import org.apache.phoenix.exception.SQLExceptionCode;
+import org.apache.phoenix.query.QueryConstants;
+import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.schema.TableProperty;
@@ -55,7 +57,8 @@ public class CDCMiscIT extends ParallelStatsDisabledIT {
         }
     }
 
-    private void assertPTable(String cdcName, Set<PTable.CDCChangeScope> expIncludeScopes)
+    private void assertPTable(String cdcName, Set<PTable.CDCChangeScope> expIncludeScopes,
+                              String datatableName)
             throws SQLException {
         Properties props = new Properties();
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -63,6 +66,9 @@ public class CDCMiscIT extends ParallelStatsDisabledIT {
         assertEquals(expIncludeScopes, table.getCDCIncludeScopes());
         assertEquals(expIncludeScopes, TableProperty.INCLUDE.getPTableValue(table));
         assertNull(table.getIndexState()); // Index state should be null for CDC.
+        assertNull(table.getIndexType()); // This is not an index.
+        assertEquals(datatableName, table.getParentName().getString());
+        assertEquals(CDCUtil.getCDCIndexName(cdcName), table.getPhysicalName().getString());
     }
 
     private void assertSaltBuckets(String cdcName, Integer nbuckets) throws SQLException {
@@ -113,6 +119,7 @@ public class CDCMiscIT extends ParallelStatsDisabledIT {
             conn.createStatement().execute("CREATE CDC " + cdcName
                     + " ON " + tableName + "(ROUND(v1))");
             fail("Expected to fail due to non-timestamp expression in the index PK");
+
         } catch (SQLException e) {
             assertEquals(SQLExceptionCode.INCORRECT_DATATYPE_FOR_EXPRESSION.getErrorCode(),
                     e.getErrorCode());
@@ -122,6 +129,7 @@ public class CDCMiscIT extends ParallelStatsDisabledIT {
             conn.createStatement().execute("CREATE CDC " + cdcName
                     + " ON " + tableName + "(v1)");
             fail("Expected to fail due to non-timestamp column in the index PK");
+
         } catch (SQLException e) {
             assertEquals(SQLExceptionCode.INCORRECT_DATATYPE_FOR_EXPRESSION.getErrorCode(),
                     e.getErrorCode());
@@ -147,13 +155,13 @@ public class CDCMiscIT extends ParallelStatsDisabledIT {
                 "(v2) INCLUDE (pre, post) INDEX_TYPE=g");
         assertCDCState(conn, cdcName, "PRE,POST", 3);
         assertPTable(cdcName, new HashSet<>(
-                Arrays.asList(PTable.CDCChangeScope.PRE, PTable.CDCChangeScope.POST)));
+                Arrays.asList(PTable.CDCChangeScope.PRE, PTable.CDCChangeScope.POST)), tableName);
 
         cdcName = generateUniqueName();
         conn.createStatement().execute("CREATE CDC " + cdcName + " ON " + tableName +
                 "(v2) INDEX_TYPE=l");
         assertCDCState(conn, cdcName, null, 2);
-        assertPTable(cdcName, null);
+        assertPTable(cdcName, null, tableName);
 
         String viewName = generateUniqueName();
         conn.createStatement().execute("CREATE VIEW " + viewName + " AS SELECT * FROM " +
@@ -251,5 +259,82 @@ public class CDCMiscIT extends ParallelStatsDisabledIT {
             assertEquals("b", rs.getString(1));
             assertEquals("bc", rs.getString(2));
         }
+    }
+    @Test
+    public void testSelectCDC() throws Exception {
+        Properties props = new Properties();
+        props.put(QueryServices.TASK_HANDLING_INTERVAL_MS_ATTRIB, Long.toString(Long.MAX_VALUE));
+        props.put("hbase.client.scanner.timeout.period", "6000000");
+        props.put("phoenix.query.timeoutMs", "6000000");
+        props.put("zookeeper.session.timeout", "6000000");
+        props.put("hbase.rpc.timeout", "6000000");
+        Connection conn = DriverManager.getConnection(getUrl(), props);
+        String tableName = generateUniqueName();
+        conn.createStatement().execute(
+                "CREATE TABLE  " + tableName + " ( k INTEGER PRIMARY KEY," + " v1 VARCHAR)");
+        conn.createStatement().execute("UPSERT INTO " + tableName + " (k) VALUES (1)");
+        conn.createStatement().execute("UPSERT INTO " + tableName + " (k) VALUES (2)");
+        conn.commit();
+        String cdcName = generateUniqueName();
+        String cdc_sql = "CREATE CDC " + cdcName
+                + " ON " + tableName + "(PHOENIX_ROW_TIMESTAMP())";
+        conn.createStatement().execute(cdc_sql);
+        assertCDCState(conn, cdcName, null, 3);
+        // NOTE: To debug the query execution, add the below condition where you need a breakpoint.
+        //      if (<table>.getTableName().getString().equals("N000002") ||
+        //                 <table>.getTableName().getString().equals("__CDC__N000002")) {
+        //          "".isEmpty();
+        //      }
+        String mockCdcJson = "\"This is a mock CDC JSON data\"";
+        ResultSet rs = conn.createStatement().executeQuery(
+                "SELECT /*+ INCLUDE(PRE, POST) */ * FROM " + cdcName);
+        assertEquals(true, rs.next());
+        assertEquals(1, rs.getInt(2));
+        assertEquals(mockCdcJson, rs.getObject(3));
+        assertEquals(true, rs.next());
+        assertEquals(2, rs.getInt(2));
+        assertEquals(mockCdcJson, rs.getObject(3));
+        assertEquals(false, rs.next());
+    }
+
+    // Temporary test case used as a reference for debugging and comparing against the CDC query.
+    @Test
+    public void testSelectUncoveredIndex() throws Exception {
+        Properties props = new Properties();
+        props.put(QueryServices.TASK_HANDLING_INTERVAL_MS_ATTRIB, Long.toString(Long.MAX_VALUE));
+        props.put("hbase.client.scanner.timeout.period", "6000000");
+        props.put("phoenix.query.timeoutMs", "6000000");
+        props.put("zookeeper.session.timeout", "6000000");
+        props.put("hbase.rpc.timeout", "6000000");
+        Connection conn = DriverManager.getConnection(getUrl(), props);
+        String tableName = generateUniqueName();
+        String mockCdcJson = "\"This is a mock CDC JSON data\"";
+        conn.createStatement().execute(
+                "CREATE TABLE  " + tableName + " (k INTEGER PRIMARY KEY, v1 VARCHAR)");
+        conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1) VALUES" +
+                " (1, '" + mockCdcJson + "')");
+        conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1) VALUES" +
+                " (2, '" + mockCdcJson + "')");
+        conn.commit();
+        String indexName = generateUniqueName();
+        String index_sql = "CREATE UNCOVERED INDEX " + indexName
+                + " ON " + tableName + "(PHOENIX_ROW_TIMESTAMP())";
+        conn.createStatement().execute(index_sql);
+        //ResultSet rs =
+        //        conn.createStatement().executeQuery("SELECT * FROM " + indexName);
+        //assertEquals(1, rs.getInt(2));
+        //assertEquals(true, rs.next())
+        //assertEquals(2, rs.getInt(2));
+        //assertEquals(false, rs.next());
+        ResultSet rs =
+                conn.createStatement().executeQuery("SELECT /*+ INDEX(" + tableName +
+                        " " + indexName + ") */ * FROM " + tableName);
+        assertEquals(true, rs.next());
+        assertEquals(1, rs.getInt(1));
+        assertEquals(mockCdcJson, rs.getObject(2));
+        assertEquals(true, rs.next());
+        assertEquals(2, rs.getInt(1));
+        assertEquals(mockCdcJson, rs.getObject(2));
+        assertEquals(false, rs.next());
     }
 }

@@ -19,6 +19,9 @@ package org.apache.phoenix.coprocessor;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.Cell;
+import org.apache.hadoop.hbase.CellBuilder;
+import org.apache.hadoop.hbase.CellBuilderFactory;
+import org.apache.hadoop.hbase.CellBuilderType;
 import org.apache.hadoop.hbase.CellUtil;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Mutation;
@@ -33,6 +36,8 @@ import org.apache.hadoop.hbase.regionserver.RegionScanner;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.phoenix.compile.ScanRanges;
 import org.apache.phoenix.execute.TupleProjector;
+import org.apache.phoenix.expression.Expression;
+import org.apache.phoenix.expression.KeyValueColumnExpression;
 import org.apache.phoenix.filter.SkipScanFilter;
 import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
 import org.apache.phoenix.index.IndexMaintainer;
@@ -51,15 +56,21 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
+import static org.apache.phoenix.coprocessor.BaseScannerRegionObserver.CDC_DATA_TABLE_NAME;
+import static org.apache.phoenix.coprocessor.BaseScannerRegionObserver.CDC_JSON_COL_QUALIFIER;
 import static org.apache.phoenix.coprocessor.BaseScannerRegionObserver.EMPTY_COLUMN_FAMILY_NAME;
 import static org.apache.phoenix.coprocessor.BaseScannerRegionObserver.EMPTY_COLUMN_QUALIFIER_NAME;
 import static org.apache.phoenix.coprocessor.GlobalIndexRegionScanner.adjustScanFilter;
+import static org.apache.phoenix.query.QueryConstants.VALUE_COLUMN_FAMILY;
+import static org.apache.phoenix.query.QueryConstants.VALUE_COLUMN_QUALIFIER;
 import static org.apache.phoenix.query.QueryServices.INDEX_PAGE_SIZE_IN_ROWS;
 import static org.apache.phoenix.util.ScanUtil.getDummyResult;
 import static org.apache.phoenix.util.ScanUtil.isDummy;
@@ -309,6 +320,21 @@ public abstract class UncoveredIndexRegionScanner extends BaseRegionScanner {
                 byte[] indexRowKey = CellUtil.cloneRow(indexRow.get(0));
                 Result dataRow = dataRows.get(new ImmutableBytesPtr(
                         indexToDataRowKeyMap.get(indexRowKey)));
+                if (scan.getAttribute(CDC_DATA_TABLE_NAME) != null) {
+                    Cell firstCell = result.get(0);
+                    byte[] value =
+                            "\"This is a mock CDC JSON data\"".getBytes(StandardCharsets.UTF_8);
+                    CellBuilder builder = CellBuilderFactory.create(CellBuilderType.SHALLOW_COPY);
+                    dataRow = Result.create(Arrays.asList(builder.
+                            setRow(indexToDataRowKeyMap.get(indexRowKey)).
+                            setFamily(firstCell.getFamilyArray()).
+                            setQualifier(scan.getAttribute((CDC_JSON_COL_QUALIFIER))).
+                            setTimestamp(indexRow.get(0).getTimestamp()).
+                            setValue(value).
+                            setType(Cell.Type.Put).
+                            build()));
+                }
+
                 if (dataRow != null) {
                     long ts = indexRow.get(0).getTimestamp();
                     if (!indexMaintainer.isUncovered()

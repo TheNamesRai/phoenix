@@ -18,13 +18,21 @@
 
 package org.apache.phoenix.util;
 
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.StringTokenizer;
 
+import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.io.WritableUtils;
 import org.apache.hadoop.util.StringUtils;
 
 import org.apache.phoenix.schema.PTable;
+
+import static org.apache.phoenix.coprocessor.BaseScannerRegionObserver.CDC_INCLUDE_SCOPES;
 
 public class CDCUtil {
     public static final String CDC_INDEX_PREFIX = "__CDC__";
@@ -81,5 +89,9 @@ public class CDCUtil {
 
     public static boolean isACDCIndex(String indexName) {
         return indexName.startsWith(CDC_INDEX_PREFIX);
+    }
+
+    public static boolean isACDCIndex(PTable indexTable) {
+        return isACDCIndex(indexTable.getTableName().getString());
     }
 }
