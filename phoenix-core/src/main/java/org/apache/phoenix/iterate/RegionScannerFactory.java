@@ -135,11 +135,12 @@ public abstract class RegionScannerFactory {
 
       {
           // for indexes construct the row filter for uncovered columns if it exists
-          if (true) {
+          if (ScanUtil.isCDC(scan)) {
             scan.setRaw(true);
             scan.readAllVersions();
             //scan.getFamilyMap().clear();
             scan.setCacheBlocks(false);
+            scan.setFilter(null);
             byte[] expBytes = scan.getAttribute(BaseScannerRegionObserver.INDEX_FILTER);
             if (expBytes == null) {
               // For older clients

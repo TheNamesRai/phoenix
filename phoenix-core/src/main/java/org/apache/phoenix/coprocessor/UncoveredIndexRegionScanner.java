@@ -106,6 +106,7 @@ public abstract class UncoveredIndexRegionScanner extends BaseRegionScanner {
     protected final long pageSizeMs;
     protected byte[] lastIndexRowKey = null;
 
+    protected final RegionScanner indexRegionScanner;
     public UncoveredIndexRegionScanner(final RegionScanner innerScanner,
                                              final Region region,
                                              final Scan scan,
@@ -116,7 +117,7 @@ public abstract class UncoveredIndexRegionScanner extends BaseRegionScanner {
                                              final byte[][] viewConstants,
                                              final ImmutableBytesWritable ptr,
                                              final long pageSizeMs,
-                                             final long queryLimit) {
+                                             final long queryLimit) throws IOException {
         super(innerScanner);
         final Configuration config = env.getConfiguration();
 
@@ -148,6 +149,12 @@ public abstract class UncoveredIndexRegionScanner extends BaseRegionScanner {
         this.ptr = ptr;
         this.tupleProjector = tupleProjector;
         this.pageSizeMs = pageSizeMs;
+
+        Scan scanIndex = new Scan();
+        scanIndex.setRaw(true);
+        scanIndex.setMaxResultSize(Integer.MAX_VALUE);
+        scanIndex.setTimeRange(scan.getTimeRange().getMin(), scan.getTimeRange().getMax());
+        indexRegionScanner = ((DelegateRegionScanner) innerScanner).getNewRegionScanner(scanIndex);
     }
 
     @Override
@@ -214,7 +221,8 @@ public abstract class UncoveredIndexRegionScanner extends BaseRegionScanner {
         boolean hasMore = false;
         if (actualStartKey != null) {
             do {
-                hasMore = innerScanner.nextRaw(result);
+                //hasMore = innerScanner.nextRaw(result);
+                hasMore = indexRegionScanner.nextRaw(result);
                 if (result.isEmpty()) {
                     return hasMore;
                 }
@@ -239,7 +247,7 @@ public abstract class UncoveredIndexRegionScanner extends BaseRegionScanner {
         do {
             List<Cell> row = new ArrayList<Cell>();
             if (result.isEmpty()) {
-                hasMore = innerScanner.nextRaw(row);
+                hasMore = indexRegionScanner.nextRaw(row);
             } else {
                 row.addAll(result);
                 result.clear();

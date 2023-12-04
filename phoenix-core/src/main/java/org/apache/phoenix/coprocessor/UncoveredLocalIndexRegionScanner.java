@@ -58,7 +58,7 @@ public class UncoveredLocalIndexRegionScanner extends UncoveredIndexRegionScanne
                                             final long pageSizeMs,
                                             final int offset,
                                             final byte[] actualStartKey,
-                                            final long queryLimit) {
+                                            final long queryLimit) throws IOException {
         super(innerScanner, region, scan, env, dataTableScan, tupleProjector, indexMaintainer,
                 viewConstants, ptr, pageSizeMs, queryLimit);
         this.offset = offset;

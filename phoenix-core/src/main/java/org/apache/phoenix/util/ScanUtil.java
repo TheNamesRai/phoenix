@@ -149,6 +149,10 @@ public class ScanUtil {
         return scan.getAttribute(BaseScannerRegionObserver.UNCOVERED_GLOBAL_INDEX) != null;
     }
 
+    public static boolean isCDC(Scan scan) {
+        return scan.getAttribute(CDC_DATA_TABLE_NAME) != null;
+    }
+
     public static boolean isLocalOrUncoveredGlobalIndex(Scan scan) {
         return isLocalIndex(scan) || isUncoveredGlobalIndex(scan);
     }
