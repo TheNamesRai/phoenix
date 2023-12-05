@@ -141,6 +141,11 @@ public abstract class RegionScannerFactory {
             //scan.getFamilyMap().clear();
             scan.setCacheBlocks(false);
             scan.setFilter(null);
+            Set<byte[]> familyMap = scan.getFamilyMap().keySet();
+            scan.getFamilyMap().clear();
+            for (byte[] family : familyMap) {
+              scan.addFamily(family);
+            }
             byte[] expBytes = scan.getAttribute(BaseScannerRegionObserver.INDEX_FILTER);
             if (expBytes == null) {
               // For older clients
@@ -176,7 +181,7 @@ public abstract class RegionScannerFactory {
               dataTableScan.readAllVersions();
               dataTableScan.getFamilyMap().clear();
               dataTableScan.setCacheBlocks(false);
-              for (byte[] family : scan.getFamilyMap().keySet()) {
+              for (byte[] family : familyMap) {
                 dataTableScan.addFamily(family);
               }
               s = new CDCGlobalIndexRegionScanner(regionScanner, dataRegion, scan, env,

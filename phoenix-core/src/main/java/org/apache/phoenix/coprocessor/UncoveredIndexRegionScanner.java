@@ -154,7 +154,10 @@ public abstract class UncoveredIndexRegionScanner extends BaseRegionScanner {
         scanIndex.setRaw(true);
         scanIndex.setMaxResultSize(Integer.MAX_VALUE);
         scanIndex.setTimeRange(scan.getTimeRange().getMin(), scan.getTimeRange().getMax());
-        indexRegionScanner = ((DelegateRegionScanner) innerScanner).getNewRegionScanner(scanIndex);
+        for (Map.Entry<String, byte[]> attr : scan.getAttributesMap().entrySet()) {
+            scanIndex.setAttribute(attr.getKey(), attr.getValue());
+        }
+        indexRegionScanner = ((DelegateRegionScanner) innerScanner).getNewRegionScanner(scan);
     }
 
     @Override
