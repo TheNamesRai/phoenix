@@ -22,9 +22,7 @@ import static org.apache.phoenix.coprocessor.ScanRegionObserver.WILDCARD_SCAN_IN
 import static org.apache.phoenix.schema.types.PDataType.TRUE_BYTES;
 
 import org.apache.hadoop.hbase.CellUtil;
-import org.apache.phoenix.coprocessor.CDCGlobalIndexRegionScanner;
-import org.apache.phoenix.coprocessor.UncoveredGlobalIndexRegionScanner;
-import org.apache.phoenix.coprocessor.UncoveredLocalIndexRegionScanner;
+import org.apache.phoenix.coprocessor.*;
 import org.apache.phoenix.schema.KeyValueSchema;
 import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PColumnImpl;
@@ -47,7 +45,6 @@ import org.apache.hadoop.hbase.regionserver.ScannerContextUtil;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.io.WritableUtils;
-import org.apache.phoenix.coprocessor.BaseScannerRegionObserver;
 import org.apache.phoenix.coprocessor.generated.DynamicColumnMetaDataProtos;
 import org.apache.phoenix.execute.TupleProjector;
 import org.apache.phoenix.expression.Expression;
@@ -70,10 +67,7 @@ import org.apache.phoenix.util.ServerUtil;
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.ListIterator;
-import java.util.Set;
+import java.util.*;
 
 public abstract class RegionScannerFactory {
 
@@ -141,7 +135,10 @@ public abstract class RegionScannerFactory {
             //scan.getFamilyMap().clear();
             scan.setCacheBlocks(false);
             scan.setFilter(null);
-            Set<byte[]> familyMap = scan.getFamilyMap().keySet();
+            Set<byte[]> familyMap = new HashSet<>();
+            for (byte[] family : scan.getFamilyMap().keySet()) {
+              familyMap.add(family);
+            }
             scan.getFamilyMap().clear();
             for (byte[] family : familyMap) {
               scan.addFamily(family);
@@ -184,7 +181,9 @@ public abstract class RegionScannerFactory {
               for (byte[] family : familyMap) {
                 dataTableScan.addFamily(family);
               }
-              s = new CDCGlobalIndexRegionScanner(regionScanner, dataRegion, scan, env,
+
+              s = new CDCGlobalIndexRegionScanner(((DelegateRegionScanner) regionScanner)
+                      .getNewRegionScanner(scan), dataRegion, scan, env,
                       dataTableScan, tupleProjector, indexMaintainer, viewConstants, ptr,
                       pageSizeMs, extraLimit);
 //              if (dataColumns != null) {

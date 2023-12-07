@@ -106,7 +106,6 @@ public abstract class UncoveredIndexRegionScanner extends BaseRegionScanner {
     protected final long pageSizeMs;
     protected byte[] lastIndexRowKey = null;
 
-    protected final RegionScanner indexRegionScanner;
     public UncoveredIndexRegionScanner(final RegionScanner innerScanner,
                                              final Region region,
                                              final Scan scan,
@@ -149,15 +148,6 @@ public abstract class UncoveredIndexRegionScanner extends BaseRegionScanner {
         this.ptr = ptr;
         this.tupleProjector = tupleProjector;
         this.pageSizeMs = pageSizeMs;
-
-        Scan scanIndex = new Scan();
-        scanIndex.setRaw(true);
-        scanIndex.setMaxResultSize(Integer.MAX_VALUE);
-        scanIndex.setTimeRange(scan.getTimeRange().getMin(), scan.getTimeRange().getMax());
-        for (Map.Entry<String, byte[]> attr : scan.getAttributesMap().entrySet()) {
-            scanIndex.setAttribute(attr.getKey(), attr.getValue());
-        }
-        indexRegionScanner = ((DelegateRegionScanner) innerScanner).getNewRegionScanner(scan);
     }
 
     @Override
@@ -225,7 +215,7 @@ public abstract class UncoveredIndexRegionScanner extends BaseRegionScanner {
         if (actualStartKey != null) {
             do {
                 //hasMore = innerScanner.nextRaw(result);
-                hasMore = indexRegionScanner.nextRaw(result);
+                hasMore = innerScanner.nextRaw(result);
                 if (result.isEmpty()) {
                     return hasMore;
                 }
@@ -250,7 +240,7 @@ public abstract class UncoveredIndexRegionScanner extends BaseRegionScanner {
         do {
             List<Cell> row = new ArrayList<Cell>();
             if (result.isEmpty()) {
-                hasMore = indexRegionScanner.nextRaw(row);
+                hasMore = innerScanner.nextRaw(row);
             } else {
                 row.addAll(result);
                 result.clear();
