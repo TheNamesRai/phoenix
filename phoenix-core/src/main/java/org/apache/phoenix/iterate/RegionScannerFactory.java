@@ -130,19 +130,6 @@ public abstract class RegionScannerFactory {
       {
           // for indexes construct the row filter for uncovered columns if it exists
           if (ScanUtil.isCDC(scan)) {
-            scan.setRaw(true);
-            scan.readAllVersions();
-            //scan.getFamilyMap().clear();
-            scan.setCacheBlocks(false);
-            scan.setFilter(null);
-            Set<byte[]> familyMap = new HashSet<>();
-            for (byte[] family : scan.getFamilyMap().keySet()) {
-              familyMap.add(family);
-            }
-            scan.getFamilyMap().clear();
-            for (byte[] family : familyMap) {
-              scan.addFamily(family);
-            }
             byte[] expBytes = scan.getAttribute(BaseScannerRegionObserver.INDEX_FILTER);
             if (expBytes == null) {
               // For older clients
@@ -174,16 +161,8 @@ public abstract class RegionScannerFactory {
               PTable.ImmutableStorageScheme storageScheme =
                       indexMaintainer.getIndexStorageScheme();
               Scan dataTableScan = new Scan();
-              dataTableScan.setRaw(true);
-              dataTableScan.readAllVersions();
-              dataTableScan.getFamilyMap().clear();
-              dataTableScan.setCacheBlocks(false);
-              for (byte[] family : familyMap) {
-                dataTableScan.addFamily(family);
-              }
 
-              s = new CDCGlobalIndexRegionScanner(((DelegateRegionScanner) regionScanner)
-                      .getNewRegionScanner(scan), dataRegion, scan, env,
+              s = new CDCGlobalIndexRegionScanner(regionScanner, dataRegion, scan, env,
                       dataTableScan, tupleProjector, indexMaintainer, viewConstants, ptr,
                       pageSizeMs, extraLimit);
 //              if (dataColumns != null) {

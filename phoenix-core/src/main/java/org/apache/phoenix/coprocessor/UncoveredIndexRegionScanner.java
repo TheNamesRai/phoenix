@@ -182,6 +182,11 @@ public abstract class UncoveredIndexRegionScanner extends BaseRegionScanner {
     protected abstract void scanDataTableRows(long startTime) throws IOException;
 
     protected Scan prepareDataTableScan(Collection<byte[]> dataRowKeys) throws IOException {
+        return prepareDataTableScan(dataRowKeys, false);
+    }
+
+    protected Scan prepareDataTableScan(Collection<byte[]> dataRowKeys,
+                                        boolean includeMultipleVersions) throws IOException {
         List<KeyRange> keys = new ArrayList<>(dataRowKeys.size());
         for (byte[] dataRowKey : dataRowKeys) {
             // If the data table scan was interrupted because of paging we retry the scan
@@ -197,7 +202,7 @@ public abstract class UncoveredIndexRegionScanner extends BaseRegionScanner {
             dataScan.setTimeRange(scan.getTimeRange().getMin(), scan.getTimeRange().getMax());
             scanRanges.initializeScan(dataScan);
             SkipScanFilter skipScanFilter = scanRanges.getSkipScanFilter();
-            dataScan.setFilter(new SkipScanFilter(skipScanFilter, false));
+            dataScan.setFilter(new SkipScanFilter(skipScanFilter, includeMultipleVersions));
             dataScan.setAttribute(BaseScannerRegionObserver.SERVER_PAGE_SIZE_MS,
                     Bytes.toBytes(Long.valueOf(pageSizeMs)));
             return dataScan;

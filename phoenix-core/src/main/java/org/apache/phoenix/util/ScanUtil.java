@@ -1325,6 +1325,8 @@ public class ScanUtil {
             scan.setAttribute(CDC_INCLUDE_SCOPES, CDCUtil.makeChangeScopeStringFromEnums(
                     context.getCdcIncludeScopes()).getBytes(StandardCharsets.UTF_8));
         }
+
+        CDCUtil.initForRawScan(scan);
     }
 
     public static void setScanAttributeForPaging(Scan scan, PhoenixConnection phoenixConnection) {

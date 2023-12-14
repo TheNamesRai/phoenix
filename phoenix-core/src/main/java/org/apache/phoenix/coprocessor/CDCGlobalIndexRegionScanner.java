@@ -40,7 +40,6 @@ import static org.apache.phoenix.hbase.index.write.AbstractParallelWriterIndexCo
 public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScanner {
     private static final Logger LOGGER =
             LoggerFactory.getLogger(CDCGlobalIndexRegionScanner.class);
-    protected final Table indexHTable;
 
     public CDCGlobalIndexRegionScanner (final RegionScanner innerScanner,
                                         final Region region,
@@ -54,13 +53,13 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
                                         final long pageSizeMs,
                                         final long queryLimit)
             throws IOException {
-
         super(innerScanner, region, scan, env, dataTableScan, tupleProjector, indexMaintainer,
                 viewConstants, ptr, pageSizeMs, queryLimit);
+        CDCUtil.initForRawScan(dataTableScan);
+    }
 
-        byte[] indexTableName = CDCUtil.getCDCIndexName(scan.getAttribute(CDC_DATA_TABLE_NAME).toString()).getBytes();
-        indexHTable = hTableFactory.getTable(new ImmutableBytesPtr("N000002".getBytes()));
-
-
+    @Override
+    protected Scan prepareDataTableScan(Collection<byte[]> dataRowKeys) throws IOException {
+        return CDCUtil.initForRawScan(prepareDataTableScan(dataRowKeys, true));
     }
 }
