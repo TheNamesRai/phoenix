@@ -283,12 +283,17 @@ public class CDCMiscIT extends ParallelStatsDisabledIT {
         Connection conn = DriverManager.getConnection(getUrl(), props);
         String tableName = generateUniqueName();
         conn.createStatement().execute(
-                "CREATE TABLE  " + tableName + " ( k INTEGER PRIMARY KEY," + " v1 INTEGER)");
-        conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1) VALUES (1, 100)");
-        conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1) VALUES (2, 200)");
+                "CREATE TABLE  " + tableName + " ( k INTEGER PRIMARY KEY," + " v1 INTEGER, v2 INTEGER)");
+        conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1, v2) VALUES (1, 100, 1000)");
+        conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1, v2) VALUES (2, 200, 2000)");
+        conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1, v2) VALUES (3, 300, 3000)");
+        conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1, v2) VALUES (4, 400, 4000)");
         conn.commit();
         Thread.sleep(1000);
         conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1) VALUES (1, 101)");
+        conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1) VALUES (2, 201)");
+        conn.commit();
+        conn.createStatement().execute("DELETE FROM " + tableName + " WHERE k=1");
         conn.commit();
         String cdcName = generateUniqueName();
         String cdc_sql = "CREATE CDC " + cdcName

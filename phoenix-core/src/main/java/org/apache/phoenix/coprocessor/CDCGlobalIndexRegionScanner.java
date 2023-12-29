@@ -47,6 +47,7 @@ import org.apache.phoenix.util.ServerUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.ws.rs.DELETE;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -75,6 +76,15 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
     // Map<dataRowKey: Map<TS: Map<qualifier: Cell>>>
     private Map<ImmutableBytesPtr, Map<Long, Map<ImmutableBytesPtr, Cell>>> dataRowChanges =
             new HashMap<>();
+
+    private final static String EVENT_TYPE = "event_type";
+    private final static String IMAGE = "image";
+    private final static String PRE_IMAGE = "pre";
+    private final static String POST_IMAGE = "post";
+    private final static String CHANGE_IMAGE = "change";
+    private final static String UPSERT_EVENT_TYPE = "upsert";
+    private final static String DELETE_EVENT_TYPE = "delete";
+    private final static String DELETE_MARKER_COLUMN_QUALIFIER = "";
 
     public CDCGlobalIndexRegionScanner(final RegionScanner innerScanner,
                                        final Region region,
@@ -115,9 +125,12 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
                 ImmutableBytesPtr dataRowKey = new ImmutableBytesPtr(
                         indexToDataRowKeyMap.get(indexRowKey));
                 Result dataRow = dataRows.get(dataRowKey);
+                Long postIndexRowTs = null;
+                List<Long> sortedTimestamps = null;
                 if (dataRow != null) {
                     Map<Long, Map<ImmutableBytesPtr, Cell>> changeTimeline = dataRowChanges.get(
                             dataRowKey);
+                    Map<ImmutableBytesPtr, Map<Long, Cell>> changeTimelinePerColumnQualifier = new HashMap<>();
                     if (changeTimeline == null) {
                         List<Cell> resultCells = Arrays.asList(dataRow.rawCells());
                         Collections.sort(resultCells, CellComparator.getInstance().reversed());
@@ -154,24 +167,34 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
                         if (currentColumn != null) {
                             columns.add(currentColumn);
                         }
-                        List<Long> sortedTimestamps = uniqueTimeStamps.stream().sorted().collect(
+                        sortedTimestamps = uniqueTimeStamps.stream().sorted().collect(
                                 Collectors.toList());
                         // FIXME: Does this need to be Concurrent?
-                        Map<ImmutableBytesPtr, Cell> rollingRow = new HashMap<>();
                         int[] columnPointers = new int[columns.size()];
                         changeTimeline = new TreeMap<>();
                         dataRowChanges.put(dataRowKey, changeTimeline);
-                        for (Long ts : sortedTimestamps) {
+                        for (int tsIndex = 0; tsIndex < sortedTimestamps.size(); tsIndex++) {
+                            if (tsIndex == indexRowTs && tsIndex < (sortedTimestamps.size() - 1)) {
+                                postIndexRowTs = sortedTimestamps.get(tsIndex + 1);
+                            }
+                            Map<ImmutableBytesPtr, Cell> rollingRow = new HashMap<>();
                             for (int i = 0; i < columns.size(); ++i) {
+                                if (columns.get(i).size() == columnPointers[i]) {
+                                    continue;
+                                }
                                 Cell cell = columns.get(i).get(columnPointers[i]);
-                                if (cell.getTimestamp() == ts) {
+                                if (cell.getTimestamp() == sortedTimestamps.get(tsIndex)) {
                                     rollingRow.put(new ImmutableBytesPtr(cell.getQualifierArray()), cell);
+                                    if (changeTimelinePerColumnQualifier.get(new ImmutableBytesPtr(cell.getQualifierArray())) == null) {
+                                        changeTimelinePerColumnQualifier.put(new ImmutableBytesPtr(cell.getQualifierArray()), new TreeMap<>());
+                                    }
+                                    changeTimelinePerColumnQualifier.get(new ImmutableBytesPtr(cell.getQualifierArray())).put(sortedTimestamps.get(tsIndex), cell);
                                     ++columnPointers[i];
                                 }
                             }
                             Map<ImmutableBytesPtr, Cell> rowOfCells = new HashMap();
                             rowOfCells.putAll(rollingRow);
-                            changeTimeline.put(ts, rowOfCells);
+                            changeTimeline.put(sortedTimestamps.get(tsIndex), rowOfCells);
                         }
                     }
 
@@ -179,10 +202,12 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
                     if (mapOfCells != null) {
                         Map <String, Object> rowValueMap = new HashMap<>(mapOfCells.size());
                         for (Map.Entry<ImmutableBytesPtr, Cell> entry: mapOfCells.entrySet()) {
-                            String colName = dataColQualNameMap.get(entry.getKey());
-                            Object colVal = dataColQualTypeMap.get(entry.getKey()).toObject(
-                                    entry.getValue().getValueArray());
-                            rowValueMap.put(colName, colVal);
+                            rowValueMap.put(EVENT_TYPE, getEventType(changeTimeline, postIndexRowTs));
+
+                            Map<String, Map<String, Object>> currentIndexImages =
+                                    getRowImages(changeTimelinePerColumnQualifier, indexRowTs);
+                            rowValueMap.put(PRE_IMAGE, currentIndexImages.get(PRE_IMAGE));
+                            rowValueMap.put(POST_IMAGE, currentIndexImages.get(POST_IMAGE));
                         }
                         Cell firstCell = result.get(0);
                         byte[] value =
@@ -211,4 +236,69 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
         }
         return false;
     }
+
+    private Object getEventType(Map<Long, Map<ImmutableBytesPtr, Cell>> changeTimeline,
+                              Long postIndexRowTs) throws IOException {
+        Object eventType = UPSERT_EVENT_TYPE;
+        if (postIndexRowTs != null) {
+            if (changeTimeline.get(postIndexRowTs).get(DELETE_MARKER_COLUMN_QUALIFIER) != null) {
+                eventType = DELETE_EVENT_TYPE;
+            }
+        }
+        return eventType;
+    }
+
+    private Map<String, Map<String, Object>> getRowImages(
+            Map<ImmutableBytesPtr, Map<Long, Cell>> changeTimelinePerColQualifier,
+            Long indexRowTs) {
+        Map<String, Map<String, Object>> images = new HashMap<>();
+        // Prepare PreImage
+        Map<String, Object> preImage = new HashMap<>();
+        for (Map.Entry<ImmutableBytesPtr, Map<Long, Cell>> colQualifierCells : changeTimelinePerColQualifier.entrySet()) {
+            Object colVal = null;
+            if(dataColQualNameMap.get(colQualifierCells.getKey()) != null) {
+                for (Map.Entry<Long, Cell> columnCell : colQualifierCells.getValue().entrySet()) {
+                    if (columnCell.getKey() >= indexRowTs) {
+                        break;
+                    }
+                    colVal = dataColQualTypeMap.get(colQualifierCells.getKey()).toObject(
+                            columnCell.getValue().getValueArray());
+                }
+                String colName = dataColQualNameMap.get(colQualifierCells.getKey());
+                preImage.put(colName, colVal);
+            }
+        }
+        images.put(PRE_IMAGE, preImage);
+
+        // Prepare PostImage
+        Map<String, Object> postImage = new HashMap<>();
+        for (Map.Entry<ImmutableBytesPtr, Map<Long, Cell>> colQualifierCells : changeTimelinePerColQualifier.entrySet()) {
+            Object colVal = null;
+            if(dataColQualNameMap.get(colQualifierCells.getKey()) != null) {
+                for (Map.Entry<Long, Cell> columnCell : colQualifierCells.getValue().entrySet()) {
+                    if (columnCell.getKey() > indexRowTs) {
+                        break;
+                    }
+                    colVal = dataColQualTypeMap.get(colQualifierCells.getKey()).toObject(
+                            columnCell.getValue().getValueArray());
+                }
+                String colName = dataColQualNameMap.get(colQualifierCells.getKey());
+                postImage.put(colName, colVal);
+            }
+        }
+        images.put(POST_IMAGE, postImage);
+
+//        for (Map.Entry<String, Object> colQualifiers : postImage.entrySet()) {
+//            if (colQualifiers.)
+//        }
+
+        return images;
+    }
+
+//    private Map<String, Object> getChangeRowImage (Map<String, Object> preImageRow,
+//                                                   Map<String, Object> currentImageRow) {
+//
+//        Map<String, Object> image = new HashMap<>();
+//
+//    }
 }
