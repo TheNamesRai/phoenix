@@ -83,4 +83,9 @@ public class WildcardParseNode extends TerminalParseNode {
     public boolean isWildcardNode() {
         return true;
     }
+
+    @Override
+    public WildcardParseNode getRewritten() {
+        return REWRITE_INSTANCE;
+    }
 }

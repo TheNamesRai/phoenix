@@ -34,6 +34,7 @@ import org.apache.phoenix.schema.ColumnRef;
 import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.thirdparty.com.google.common.collect.Lists;
 import org.apache.phoenix.thirdparty.com.google.common.collect.Maps;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * 
@@ -134,11 +135,6 @@ public class ParseNodeRewriter extends TraverseAllParseNodeVisitor<ParseNode> {
             if (selectNodes == normSelectNodes) {
                 normSelectNodes = Lists.newArrayList(selectNodes.subList(0, i));
             }
-            if (forCDC && selectNode instanceof WildcardNode) {
-                normSelectNodes.add(0, NODE_FACTORY.aliasedNode(null,
-                        NODE_FACTORY.function(PhoenixRowTimestampFunction.NAME,
-                                Collections.emptyList())));
-            }
             AliasedNode normAliasedNode = NODE_FACTORY.aliasedNode(aliasedNode.isCaseSensitve() ? '"' + aliasedNode.getAlias() + '"' : aliasedNode.getAlias(), normSelectNode);
             normSelectNodes.add(normAliasedNode);
         }
@@ -197,14 +193,6 @@ public class ParseNodeRewriter extends TraverseAllParseNodeVisitor<ParseNode> {
                 normOrderByNodes = Lists.newArrayList(orderByNodes.subList(0, i));
             }
             normOrderByNodes.add(NODE_FACTORY.orderBy(normNode, orderByNode.isNullsLast(), orderByNode.isAscending()));
-        }
-        // For CDC queries, if no ORDER BY is specified, add default ordering.
-        if (forCDC && normOrderByNodes.size() == 0) {
-            normOrderByNodes = Lists.newArrayListWithExpectedSize(1);
-            normOrderByNodes.add(NODE_FACTORY.orderBy(
-                    NODE_FACTORY.function(PhoenixRowTimestampFunction.NAME,
-                            Collections.emptyList()),
-                    false, SortOrder.getDefault() == SortOrder.ASC));
         }
 
         // Return new SELECT statement with updated WHERE clause

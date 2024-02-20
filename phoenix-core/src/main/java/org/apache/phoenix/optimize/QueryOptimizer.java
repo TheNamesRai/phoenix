@@ -40,6 +40,7 @@ import org.apache.phoenix.compile.SequenceManager;
 import org.apache.phoenix.compile.StatementContext;
 import org.apache.phoenix.compile.WhereCompiler;
 import org.apache.phoenix.execute.ScanPlan;
+import org.apache.phoenix.expression.function.PhoenixRowTimestampFunction;
 import org.apache.phoenix.index.IndexMaintainer;
 import org.apache.phoenix.iterate.ParallelIteratorFactory;
 import org.apache.phoenix.jdbc.PhoenixConnection;
@@ -53,7 +54,10 @@ import org.apache.phoenix.parse.HintNode;
 import org.apache.phoenix.parse.HintNode.Hint;
 import org.apache.phoenix.parse.IndexExpressionParseNodeRewriter;
 import org.apache.phoenix.parse.JoinTableNode;
+import org.apache.phoenix.parse.LimitNode;
 import org.apache.phoenix.parse.NamedTableNode;
+import org.apache.phoenix.parse.OffsetNode;
+import org.apache.phoenix.parse.OrderByNode;
 import org.apache.phoenix.parse.ParseNode;
 import org.apache.phoenix.parse.ParseNodeFactory;
 import org.apache.phoenix.parse.ParseNodeRewriter;
@@ -61,6 +65,8 @@ import org.apache.phoenix.parse.SelectStatement;
 import org.apache.phoenix.parse.TableName;
 import org.apache.phoenix.parse.TableNode;
 import org.apache.phoenix.parse.TableNodeVisitor;
+import org.apache.phoenix.parse.TerminalParseNode;
+import org.apache.phoenix.parse.UDFParseNode;
 import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.query.QueryServicesOptions;
@@ -73,6 +79,7 @@ import org.apache.phoenix.schema.PTable.IndexType;
 import org.apache.phoenix.schema.PTableImpl;
 import org.apache.phoenix.schema.PTableType;
 import org.apache.phoenix.schema.RowValueConstructorOffsetNotCoercibleException;
+import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.TableRef;
 import org.apache.phoenix.schema.types.PDataType;
 import org.apache.phoenix.util.CDCUtil;
@@ -223,13 +230,13 @@ public class QueryOptimizer {
 
         PTable table = dataPlan.getTableRef().getTable();
         if (table.getType() == PTableType.CDC) {
-            NamedTableNode indexTable = FACTORY.namedTable(null,
+            NamedTableNode indexTableNode = FACTORY.namedTable(null,
                     FACTORY.table(table.getSchemaName().getString(),
                             CDCUtil.getCDCIndexName(table.getTableName().getString())),
                     select.getTableSamplingRate());
-            ColumnResolver resolver = FromCompiler.getResolver(indexTable,
+            ColumnResolver indexResolver = FromCompiler.getResolver(indexTableNode,
                     statement.getConnection());
-            TableRef indexTableRef = resolver.getTables().get(0);
+            TableRef indexTableRef = indexResolver.getTables().get(0);
             PTable cdcIndex = indexTableRef.getTable();
             PTableImpl.Builder indexBuilder = PTableImpl.builderFromExisting(cdcIndex);
             List<PColumn> idxColumns = cdcIndex.getColumns();
@@ -242,8 +249,33 @@ public class QueryOptimizer {
             indexBuilder.setParentTableName(table.getName());
             cdcIndex = indexBuilder.build();
             indexTableRef.setTable(cdcIndex);
-            SelectStatement translatedIndexSelect = IndexStatementRewriter.translate(select,
-                    FromCompiler.getResolver(dataPlan.getTableRef()), null, true);
+            List<AliasedNode> selectNodes = select.getSelect();
+            ParseNode selectNode = selectNodes.size() == 1 ? selectNodes.get(0).getNode() : null;
+            if (selectNode instanceof TerminalParseNode &&
+                    ((TerminalParseNode) selectNode).isWildcardNode()) {
+                List<AliasedNode> tmpSelectNodes = Lists.newArrayListWithExpectedSize(
+                        selectNodes.size() + 1);
+                tmpSelectNodes.add(FACTORY.aliasedNode(null,
+                        FACTORY.function(PhoenixRowTimestampFunction.NAME,
+                                Collections.emptyList())));
+                tmpSelectNodes.add(FACTORY.aliasedNode(null,
+                        ((TerminalParseNode) selectNode).getRewritten()));
+                selectNodes = tmpSelectNodes;
+            }
+            List<OrderByNode> orderByNodes = select.getOrderBy();
+            // For CDC queries, if no ORDER BY is specified, add default ordering.
+            if (orderByNodes.size() == 0) {
+                orderByNodes = Lists.newArrayListWithExpectedSize(1);
+                orderByNodes.add(FACTORY.orderBy(
+                        FACTORY.function(PhoenixRowTimestampFunction.NAME,
+                                Collections.emptyList()),
+                        false, SortOrder.getDefault() == SortOrder.ASC));
+            }
+            SelectStatement translatedIndexSelect = FACTORY.select(select.getFrom(), select.getHint(),
+                    select.isDistinct(), selectNodes, select.getWhere(),
+                    select.getGroupBy(), select.getHaving(), orderByNodes, select.getLimit(),
+                    select.getOffset(), select.getBindCount(), select.isAggregate(),
+                    select.hasSequence(), select.getSelects(), select.getUdfParseNodes());
 
             PTableImpl.Builder cdcBuilder = PTableImpl.builderFromExisting(table);
             cdcBuilder.setColumns(table.getColumns());
@@ -251,8 +283,8 @@ public class QueryOptimizer {
             table = cdcBuilder.build();
             dataPlan.getTableRef().setTable(table);
             QueryPlan queryPlan = addPlan(statement, select, cdcIndex, targetColumns,
-                    parallelIteratorFactory, dataPlan, false, translatedIndexSelect, resolver,
-                    true);
+                    parallelIteratorFactory, dataPlan, false, translatedIndexSelect,
+                    indexResolver, true);
             return Arrays.asList(queryPlan);
         }
 
@@ -418,8 +450,15 @@ public class QueryOptimizer {
                             : index.getTableName().getString();
                     throw new ColumnNotFoundException(schemaNameStr, tableNameStr, null, "*");
                 }
-            	// translate nodes that match expressions that are indexed to the associated column parse node
+                // translate nodes that match expressions that are indexed to the associated column parse node
                 SelectStatement rewrittenIndexSelect = ParseNodeRewriter.rewrite(indexSelect, new  IndexExpressionParseNodeRewriter(index, null, statement.getConnection(), indexSelect.getUdfParseNodes()));
+                // For CDC, rewritten statement from above gets the startRow/endRow scan
+                // attributes set, but order by is dropped from the plan. Using without rewrite
+                // preserves the order by, but doesn't get the startRow/endRow set.
+                //SelectStatement rewrittenIndexSelect = forCDC ? indexSelect :
+                //        ParseNodeRewriter.rewrite(indexSelect,
+                //                new  IndexExpressionParseNodeRewriter(index, null,
+                //                        statement.getConnection(), indexSelect.getUdfParseNodes()));
                 QueryCompiler compiler = new QueryCompiler(statement, rewrittenIndexSelect, resolver, targetColumns, parallelIteratorFactory, dataPlan.getContext().getSequenceManager(), isProjected, true, dataPlans);
 
                 PTable dataTable = dataPlan.getTableRef().getTable();

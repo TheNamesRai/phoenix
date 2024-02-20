@@ -27,14 +27,17 @@ import java.util.List;
  * 
  * @since 0.1
  */
-public abstract class TerminalParseNode extends ParseNode implements WildcardNode {
+public abstract class TerminalParseNode extends ParseNode {
     @Override
     public final List<ParseNode> getChildren() {
         return Collections.emptyList();
     }
 
-    @Override
     public boolean isWildcardNode() {
         return false;
+    }
+
+    public TerminalParseNode getRewritten() {
+        return null;
     }
 }

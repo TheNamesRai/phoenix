@@ -87,5 +87,10 @@ public class TableWildcardParseNode extends NamedParseNode {
 	public boolean isWildcardNode() {
 		return true;
 	}
+
+	@Override
+	public TableWildcardParseNode getRewritten() {
+		return new TableWildcardParseNode(tableName, true);
+	}
 }
 
