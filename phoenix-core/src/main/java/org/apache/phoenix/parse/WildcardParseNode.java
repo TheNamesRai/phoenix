@@ -77,6 +77,10 @@ public class WildcardParseNode extends TerminalParseNode {
         buf.append(' ');
         buf.append(NAME);
         buf.append(' ');
-    }    
-    
+    }
+
+    @Override
+    public boolean isWildcardNode() {
+        return true;
+    }
 }

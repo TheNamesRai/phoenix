@@ -82,5 +82,10 @@ public class TableWildcardParseNode extends NamedParseNode {
         toSQL(buf);
         buf.append(".*");
     }
+
+	@Override
+	public boolean isWildcardNode() {
+		return true;
+	}
 }
 

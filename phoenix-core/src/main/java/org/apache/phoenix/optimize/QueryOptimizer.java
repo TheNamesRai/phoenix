@@ -39,6 +39,7 @@ import org.apache.phoenix.compile.QueryPlan;
 import org.apache.phoenix.compile.SequenceManager;
 import org.apache.phoenix.compile.StatementContext;
 import org.apache.phoenix.compile.WhereCompiler;
+import org.apache.phoenix.execute.ScanPlan;
 import org.apache.phoenix.index.IndexMaintainer;
 import org.apache.phoenix.iterate.ParallelIteratorFactory;
 import org.apache.phoenix.jdbc.PhoenixConnection;
@@ -221,16 +222,6 @@ public class QueryOptimizer {
         }
 
         PTable table = dataPlan.getTableRef().getTable();
-        //if (table.getType() == PTableType.CDC) {
-        //    Set<PTable.CDCChangeScope> cdcIncludeScopes = table.getCDCIncludeScopes();
-        //    String cdcHint = select.getHint().getHint(Hint.CDC_INCLUDE);
-        //    if (cdcHint != null && cdcHint.startsWith(HintNode.PREFIX)) {
-        //        cdcIncludeScopes = CDCUtil.makeChangeScopeEnumsFromString(cdcHint.substring(1,
-        //                cdcHint.length() - 1));
-        //    }
-        //    dataPlan.getContext().setCDCIncludeScopes(cdcIncludeScopes);
-        //    return Arrays.asList(dataPlan);
-        //}
         if (table.getType() == PTableType.CDC) {
             NamedTableNode indexTable = FACTORY.namedTable(null,
                     FACTORY.table(table.getSchemaName().getString(),
@@ -252,7 +243,7 @@ public class QueryOptimizer {
             cdcIndex = indexBuilder.build();
             indexTableRef.setTable(cdcIndex);
             SelectStatement translatedIndexSelect = IndexStatementRewriter.translate(select,
-                    FromCompiler.getResolver(dataPlan.getTableRef()));
+                    FromCompiler.getResolver(dataPlan.getTableRef()), null, true);
 
             PTableImpl.Builder cdcBuilder = PTableImpl.builderFromExisting(table);
             cdcBuilder.setColumns(table.getColumns());
@@ -441,8 +432,7 @@ public class QueryOptimizer {
                     ColumnResolver dataTableResolver = FromCompiler.getResolver(cdcDataTableName,
                             statement.getConnection());
                     TableRef cdcDataTableRef = dataTableResolver.getTables().get(0);
-                    plan = compiler.compileCDCSelect(dataPlan.getTableRef(), cdcDataTableRef,
-                            dataPlan);
+                    plan = compiler.compileCDCSelect(dataPlan.getTableRef(), cdcDataTableRef);
                 }
                 else {
                     plan = compiler.compile();
@@ -503,7 +493,7 @@ public class QueryOptimizer {
                         || (indexState == PIndexState.PENDING_DISABLE
                         && isUnderPendingDisableThreshold(indexTableRef.getCurrentTime(),
                         indexTable.getIndexDisableTimestamp()))) {
-                    if (plan.getProjector().getColumnCount() == nColumns) {
+                    if (forCDC || plan.getProjector().getColumnCount() == nColumns) {
                         return plan;
                     } else {
                         String schemaNameStr = index.getSchemaName() == null ? null
@@ -790,7 +780,8 @@ public class QueryOptimizer {
             return select;
         }
 
-        SelectStatement indexSelect = IndexStatementRewriter.translate(FACTORY.select(select, newFrom), resolver, replacement);
+        SelectStatement indexSelect = IndexStatementRewriter.translate(FACTORY.select(select,
+                newFrom), resolver, replacement, false);
         for (TableRef indexTableRef : replacement.values()) {
             // replace expressions with corresponding matching columns for functional indexes
             indexSelect = ParseNodeRewriter.rewrite(indexSelect, new IndexExpressionParseNodeRewriter(indexTableRef.getTable(), indexTableRef.getTableAlias(), connection, indexSelect.getUdfParseNodes()));
