@@ -19,6 +19,7 @@ package org.apache.phoenix.hbase.index.util;
 
 import java.io.DataInput;
 import java.io.IOException;
+import java.util.Arrays;
 
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.util.Bytes;
@@ -108,4 +109,11 @@ public class ImmutableBytesPtr extends ImmutableBytesWritable {
     }
     return ptr.copyBytes();
   }
+
+    public static byte[] copyBytesIfNecessary(byte[] bytes, int offset, int length) {
+        if (offset == 0 && length == bytes.length) {
+            return bytes;
+        }
+        return Arrays.copyOfRange(bytes, offset, offset + length);
+    }
 }

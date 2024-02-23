@@ -30,7 +30,6 @@ import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.regionserver.Region;
 import org.apache.hadoop.hbase.regionserver.RegionScanner;
-import org.apache.hadoop.yarn.webapp.hamlet2.Hamlet;
 import org.apache.phoenix.coprocessor.generated.CDCInfoProtos;
 import org.apache.phoenix.execute.TupleProjector;
 import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
@@ -46,10 +45,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.sql.Date;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.util.Arrays;
@@ -127,6 +123,8 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
             Long indexCellTS = firstCell.getTimestamp();
             Map<String, Object> preImageObj = null;
             Map<String, Object> changeImageObj = null;
+            // FIXME: The below boolean flags should probably be translated to util methods on
+            //  the Enum class itself.
             boolean isChangeImageInScope = this.cdcChangeScopeSet.size() == 0
                     || (this.cdcChangeScopeSet.contains(PTable.CDCChangeScope.CHANGE));
             boolean isPreImageInScope =
@@ -212,9 +210,9 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
                         }
                     }
                     if (isChangeDataTableCellPresent || isIndexCellDeleteRow) {
-                        Result cdcRow = getCDCImage(preImageObj, changeImageObj, isIndexCellDeleteRow,
-                                indexCellTS, firstCell, isChangeImageInScope, isPreImageInScope,
-                                isPostImageInScope);
+                        Result cdcRow = getCDCImage(dataRowKey, preImageObj, changeImageObj,
+                                isIndexCellDeleteRow, indexCellTS, firstCell,
+                                isChangeImageInScope, isPreImageInScope, isPostImageInScope);
                         if (cdcRow != null && tupleProjector != null) {
                             if (firstCell.getType() == Cell.Type.DeleteFamily) {
                                 // result is of type EncodedColumnQualiferCellsList for queries with
@@ -268,9 +266,10 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
     }
 
     private Result getCDCImage(
-            Map<String, Object> preImageObj, Map<String, Object> changeImageObj,
-            boolean isIndexCellDeleteRow, Long indexCellTS, Cell firstCell,
-            boolean isChangeImageInScope, boolean isPreImageInScope, boolean isPostImageInScope) {
+            ImmutableBytesPtr dataRowKey, Map<String, Object> preImageObj,
+            Map<String, Object> changeImageObj, boolean isIndexCellDeleteRow, Long indexCellTS,
+            Cell firstCell, boolean isChangeImageInScope, boolean isPreImageInScope,
+            boolean isPostImageInScope) {
         Map<String, Object> rowValueMap = new HashMap<>();
 
         if (isPreImageInScope) {
@@ -300,9 +299,10 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
                 gson.toJson(rowValueMap).getBytes(StandardCharsets.UTF_8);
         CellBuilder builder = CellBuilderFactory.create(CellBuilderType.SHALLOW_COPY);
         Result cdcRow = Result.create(Arrays.asList(builder
-                .setRow(indexToDataRowKeyMap.get(CellUtil.cloneRow(firstCell)))
-                .setFamily(firstCell.getFamilyArray())
-                .setQualifier(scan.getAttribute(CDC_JSON_COL_QUALIFIER))
+                .setRow(dataRowKey.copyBytesIfNecessary())
+                .setFamily(ImmutableBytesPtr.copyBytesIfNecessary(firstCell.getFamilyArray(),
+                        firstCell.getFamilyOffset(), firstCell.getFamilyLength()))
+                .setQualifier(scan.getAttribute(CDC_JSON_COL_QUALIFIER)) // FIXME: Move this to CDCTableInfo
                 .setTimestamp(indexCellTS)
                 .setValue(value)
                 .setType(Cell.Type.Put)
