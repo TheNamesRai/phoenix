@@ -1,6 +1,5 @@
 package org.apache.phoenix.end2end;
 
-import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.query.QueryServicesOptions;
 import org.apache.phoenix.schema.PIndexState;
 import org.apache.phoenix.schema.PTable;
@@ -53,17 +52,17 @@ public class CDCBaseIT extends ParallelStatsDisabledIT {
         conn.createStatement().execute(table_sql + " " + String.join(", ", props));
     }
 
-    protected void createCDCAndWait(Connection conn, String tableName, String cdcName,
+    protected void createCDCAndWait(Connection conn, String schemaName, String tableName, String cdcName,
                                     String cdc_sql) throws Exception {
-        createCDCAndWait(conn, tableName, cdcName, cdc_sql, null, 0);
+        createCDCAndWait(conn, schemaName, tableName, cdcName, cdc_sql, null, 0);
     }
 
-    protected void createCDCAndWait(Connection conn, String tableName, String cdcName,
+    protected void createCDCAndWait(Connection conn, String schemaName, String tableName, String cdcName,
                                     String cdc_sql, PTable.QualifierEncodingScheme encodingScheme,
                                     int nSaltBuckets) throws Exception {
         // For CDC, multitenancy gets derived automatically via the parent table.
         createTable(conn, cdc_sql, encodingScheme, false, nSaltBuckets);
-        IndexToolIT.runIndexTool(false, null, tableName,
+        IndexToolIT.runIndexTool(false, schemaName, tableName,
                 "\""+CDCUtil.getCDCIndexName(cdcName)+"\"");
         TestUtil.waitForIndexState(conn, CDCUtil.getCDCIndexName(cdcName), PIndexState.ACTIVE);
     }
@@ -104,7 +103,7 @@ public class CDCBaseIT extends ParallelStatsDisabledIT {
         Properties props = new Properties();
         Connection conn = DriverManager.getConnection(getUrl(), props);
         PTable cdcTable = PhoenixRuntime.getTable(conn, cdcName);
-        assertEquals(nbuckets, cdcTable.getBucketNum());
+        assertNull(cdcTable.getBucketNum());
         PTable indexTable = PhoenixRuntime.getTable(conn, CDCUtil.getCDCIndexName(cdcName));
         assertEquals(nbuckets, indexTable.getBucketNum());
     }

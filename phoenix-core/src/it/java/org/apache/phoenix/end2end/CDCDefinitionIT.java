@@ -18,11 +18,11 @@
 package org.apache.phoenix.end2end;
 
 import org.apache.phoenix.exception.SQLExceptionCode;
-import org.apache.phoenix.hbase.index.IndexRegionObserver;
 import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.util.CDCUtil;
 import org.apache.phoenix.util.PhoenixRuntime;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
@@ -45,10 +45,10 @@ import static org.junit.Assert.fail;
 
 @RunWith(Parameterized.class)
 @Category(ParallelStatsDisabledTest.class)
-public class CDCMiscIT extends CDCBaseIT {
+public class CDCDefinitionIT extends CDCBaseIT {
     private final boolean forView;
 
-    public CDCMiscIT(boolean forView) {
+    public CDCDefinitionIT(boolean forView) {
         this.forView = forView;
     }
 
@@ -75,6 +75,7 @@ public class CDCMiscIT extends CDCBaseIT {
             tableName = viewName;
         }
         String cdcName = generateUniqueName();
+        String cdc_sql;
 
         try {
             conn.createStatement().execute("CREATE CDC " + cdcName
@@ -84,8 +85,8 @@ public class CDCMiscIT extends CDCBaseIT {
             assertEquals(SQLExceptionCode.TABLE_UNDEFINED.getErrorCode(), e.getErrorCode());
         }
 
-        String cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName;
-        createCDCAndWait(conn, tableName, cdcName, cdc_sql);
+        cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName;
+        createCDCAndWait(conn, null, tableName, cdcName, cdc_sql);
         assertCDCState(conn, cdcName, null, 3);
 
         try {
@@ -102,7 +103,7 @@ public class CDCMiscIT extends CDCBaseIT {
         cdcName = generateUniqueName();
         cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName +
                 " INCLUDE (pre, post) INDEX_TYPE=g";
-        createCDCAndWait(conn, tableName, cdcName, cdc_sql);
+        createCDCAndWait(conn, null, tableName, cdcName, cdc_sql);
         assertCDCState(conn, cdcName, "PRE,POST", 3);
         assertPTable(cdcName, new HashSet<>(
                 Arrays.asList(PTable.CDCChangeScope.PRE, PTable.CDCChangeScope.POST)), tableName,
@@ -110,7 +111,7 @@ public class CDCMiscIT extends CDCBaseIT {
 
         cdcName = generateUniqueName();
         cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName + " INDEX_TYPE=l";
-        createCDCAndWait(conn, tableName, cdcName, cdc_sql);
+        createCDCAndWait(conn, null, tableName, cdcName, cdc_sql);
         assertCDCState(conn, cdcName, null, 2);
         assertPTable(cdcName, null, tableName, datatableName);
 
@@ -118,11 +119,46 @@ public class CDCMiscIT extends CDCBaseIT {
         if (! forView) {
             cdcName = generateUniqueName();
             cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName;
-            createCDCAndWait(conn, tableName, cdcName, cdc_sql, null, 4);
+            createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, null, 4);
             assertSaltBuckets(cdcName, 4);
         }
 
         conn.close();
+    }
+
+    @Ignore // Timing out in IndexTool.
+    @Test
+    public void testCreateWithSchemaName() throws Exception {
+        Properties props = new Properties();
+        Connection conn = DriverManager.getConnection(getUrl(), props);
+        String schemaName = generateUniqueName();
+        String tableName = generateUniqueName();
+        String datatableName = tableName;
+        conn.createStatement().execute(
+                "CREATE TABLE  " + schemaName + "." + tableName + " ( k INTEGER PRIMARY KEY," +
+                        " v1 INTEGER, v2 DATE)");
+        if (forView) {
+            String viewName = generateUniqueName();
+            conn.createStatement().execute(
+                    "CREATE VIEW " + schemaName + "." + viewName + " AS SELECT * FROM " +
+                    schemaName + "."+ tableName);
+            tableName = viewName;
+        }
+        String cdcName = generateUniqueName();
+        String cdc_sql;
+
+        try {
+            conn.createStatement().execute("CREATE CDC " + cdcName
+                    + " ON NON_EXISTENT_TABLE");
+            fail("Expected to fail due to non-existent table");
+        } catch (SQLException e) {
+            assertEquals(SQLExceptionCode.TABLE_UNDEFINED.getErrorCode(), e.getErrorCode());
+        }
+
+        cdc_sql = "CREATE CDC " + cdcName + " ON " + schemaName + "." + tableName;
+        createCDCAndWait(conn, schemaName, tableName, cdcName, cdc_sql);
+        assertCDCState(conn, cdcName, null, 3);
+        assertPTable(cdcName, null, tableName, datatableName);
     }
 
     @Test
@@ -147,8 +183,7 @@ public class CDCMiscIT extends CDCBaseIT {
         assertEquals(true, cdcTable.isMultiTenant());
         List<PColumn> cdcPkColumns = cdcTable.getPKColumns();
         assertEquals("TENANTID", cdcPkColumns.get(0).getName().getString());
-        assertEquals("PHOENIX_ROW_TIMESTAMP()", cdcPkColumns.get(1).getName().getString());
-        assertEquals("K", cdcPkColumns.get(2).getName().getString());
+        assertEquals("K", cdcPkColumns.get(1).getName().getString());
     }
 
     @Test
@@ -172,8 +207,6 @@ public class CDCMiscIT extends CDCBaseIT {
                 String.valueOf(NON_ENCODED_QUALIFIERS.getSerializedMetadataValue()));
         PTable indexTable = PhoenixRuntime.getTable(conn, CDCUtil.getCDCIndexName(cdcName));
         assertEquals(indexTable.getEncodingScheme(), NON_ENCODED_QUALIFIERS);
-        PTable cdcTable = PhoenixRuntime.getTable(conn, cdcName);
-        assertEquals(cdcTable.getEncodingScheme(), NON_ENCODED_QUALIFIERS);
     }
 
     public void testDropCDC () throws SQLException {

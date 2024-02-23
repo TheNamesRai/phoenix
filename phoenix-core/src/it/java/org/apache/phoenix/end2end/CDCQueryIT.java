@@ -388,7 +388,7 @@ public class CDCQueryIT extends CDCBaseIT {
             cdcName = generateUniqueName();
             cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName;
             if (!dataFirst) {
-                createCDCAndWait(conn, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
+                createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
             }
         }
 
@@ -446,7 +446,7 @@ public class CDCQueryIT extends CDCBaseIT {
         }
         if (dataFirst) {
             try (Connection conn = newConnection()) {
-                createCDCAndWait(conn, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
+                createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
             }
         }
 
@@ -506,7 +506,7 @@ public class CDCQueryIT extends CDCBaseIT {
             cdcName = generateUniqueName();
             cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName;
             if (!dataFirst) {
-                createCDCAndWait(conn, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
+                createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
             }
         }
 
@@ -577,7 +577,7 @@ public class CDCQueryIT extends CDCBaseIT {
 
         if (dataFirst) {
             try (Connection conn = newConnection()) {
-                createCDCAndWait(conn, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
+                createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
             }
         }
 
@@ -650,7 +650,7 @@ public class CDCQueryIT extends CDCBaseIT {
             cdcName = generateUniqueName();
             cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName;
             if (!dataFirst) {
-                createCDCAndWait(conn, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
+                createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
             }
             conn.createStatement().execute("ALTER TABLE " + datatableName + " DROP COLUMN v0");
         }
@@ -696,7 +696,7 @@ public class CDCQueryIT extends CDCBaseIT {
 
         if (dataFirst) {
             try (Connection conn = newConnection()) {
-                createCDCAndWait(conn, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
+                createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
             }
         }
 
@@ -770,7 +770,7 @@ public class CDCQueryIT extends CDCBaseIT {
             cdcName = generateUniqueName();
             cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName;
             if (!dataFirst) {
-                createCDCAndWait(conn, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
+                createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
             }
         }
 
@@ -794,7 +794,7 @@ public class CDCQueryIT extends CDCBaseIT {
 
         if (dataFirst) {
             try (Connection conn = newConnection()) {
-                createCDCAndWait(conn, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
+                createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
             }
         }
 
@@ -807,6 +807,11 @@ public class CDCQueryIT extends CDCBaseIT {
 
     @Test
     public void testSelectCDCFailDataTableUpdate() throws Exception {
+        if (dataFirst == true) {
+            // In this case, index will not exist at the time of upsert, so we can't simulate the
+            // index failure.
+            return;
+        }
         Connection conn = newConnection();
         String tableName = generateUniqueName();
         createTable(conn, "CREATE TABLE  " + tableName +
@@ -821,7 +826,7 @@ public class CDCQueryIT extends CDCBaseIT {
         String cdc_sql = "CREATE CDC " + cdcName
                 + " ON " + tableName;
         if (! dataFirst) {
-            createCDCAndWait(conn, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
+            createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
         }
         IndexRegionObserver.setFailDataTableUpdatesForTesting(true);
         EnvironmentEdgeManager.injectEdge(injectEdge);
@@ -870,7 +875,7 @@ public class CDCQueryIT extends CDCBaseIT {
         EnvironmentEdgeManager.reset();
 
         if (dataFirst) {
-            createCDCAndWait(conn, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
+            createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, encodingScheme, nSaltBuckets);
         }
 
         ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM " + cdcName);
