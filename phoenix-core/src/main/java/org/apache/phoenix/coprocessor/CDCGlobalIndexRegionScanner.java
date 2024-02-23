@@ -117,7 +117,7 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
             // timestamp of the cell and the row will be same.
             Cell firstCell = indexRow.get(indexRow.size() - 1);
             ImmutableBytesPtr dataRowKey = new ImmutableBytesPtr(
-                    indexToDataRowKeyMap.get(CellUtil.cloneRow(firstCell)));
+                    indexToDataRowKeyMap.get(ImmutableBytesPtr.cloneCellRowIfNecessary(firstCell)));
             Result dataRow = dataRows.get(dataRowKey);
             Long indexCellTS = firstCell.getTimestamp();
             Map<String, Object> preImageObj = null;
@@ -219,8 +219,9 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
                                 // as it expects column qualifier bytes which is not available.
                                 // Adding empty PUT cell as a placeholder.
                                 result.add(CellBuilderFactory.create(CellBuilderType.SHALLOW_COPY)
-                                        .setRow(firstCell.getRowArray())
-                                        .setFamily(firstCell.getFamilyArray())
+                                        .setRow(dataRowKey.copyBytesIfNecessary())
+                                        .setFamily(ImmutableBytesPtr.cloneCellFamilyIfNecessary(
+                                                firstCell))
                                         .setQualifier(indexMaintainer.getEmptyKeyValueQualifier())
                                         .setTimestamp(firstCell.getTimestamp())
                                         .setType(Cell.Type.Put)
@@ -298,8 +299,7 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
         CellBuilder builder = CellBuilderFactory.create(CellBuilderType.SHALLOW_COPY);
         Result cdcRow = Result.create(Arrays.asList(builder
                 .setRow(dataRowKey.copyBytesIfNecessary())
-                .setFamily(ImmutableBytesPtr.copyBytesIfNecessary(firstCell.getFamilyArray(),
-                        firstCell.getFamilyOffset(), firstCell.getFamilyLength()))
+                .setFamily(ImmutableBytesPtr.cloneCellFamilyIfNecessary(firstCell))
                 .setQualifier(cdcDataTableInfo.getCdcJsonColQualBytes())
                 .setTimestamp(indexCellTS)
                 .setValue(value)
