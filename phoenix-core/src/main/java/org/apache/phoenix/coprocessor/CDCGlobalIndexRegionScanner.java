@@ -57,7 +57,6 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.apache.phoenix.coprocessor.BaseScannerRegionObserver.CDC_DATA_TABLE_DEF;
-import static org.apache.phoenix.coprocessor.BaseScannerRegionObserver.CDC_JSON_COL_QUALIFIER;
 import static org.apache.phoenix.query.QueryConstants.CDC_DELETE_EVENT_TYPE;
 import static org.apache.phoenix.query.QueryConstants.CDC_EVENT_TYPE;
 import static org.apache.phoenix.query.QueryConstants.CDC_PRE_IMAGE;
@@ -220,12 +219,12 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
                                 // as it expects column qualifier bytes which is not available.
                                 // Adding empty PUT cell as a placeholder.
                                 result.add(CellBuilderFactory.create(CellBuilderType.SHALLOW_COPY)
-                                        .setRow(firstCell.getRowArray()).
-                                        setFamily(firstCell.getFamilyArray())
-                                        .setQualifier(indexMaintainer.getEmptyKeyValueQualifier()).
-                                        setTimestamp(firstCell.getTimestamp())
-                                        .setType(Cell.Type.Put).
-                                        setValue(EMPTY_BYTE_ARRAY).build());
+                                        .setRow(firstCell.getRowArray())
+                                        .setFamily(firstCell.getFamilyArray())
+                                        .setQualifier(indexMaintainer.getEmptyKeyValueQualifier())
+                                        .setTimestamp(firstCell.getTimestamp())
+                                        .setType(Cell.Type.Put)
+                                        .setValue(EMPTY_BYTE_ARRAY).build());
                             } else {
                                 result.add(firstCell);
                             }
@@ -265,8 +264,7 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
         return cdcColumnName;
     }
 
-    private Result getCDCImage(
-            ImmutableBytesPtr dataRowKey, Map<String, Object> preImageObj,
+    private Result getCDCImage(ImmutableBytesPtr dataRowKey, Map<String, Object> preImageObj,
             Map<String, Object> changeImageObj, boolean isIndexCellDeleteRow, Long indexCellTS,
             Cell firstCell, boolean isChangeImageInScope, boolean isPreImageInScope,
             boolean isPostImageInScope) {
@@ -302,7 +300,7 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
                 .setRow(dataRowKey.copyBytesIfNecessary())
                 .setFamily(ImmutableBytesPtr.copyBytesIfNecessary(firstCell.getFamilyArray(),
                         firstCell.getFamilyOffset(), firstCell.getFamilyLength()))
-                .setQualifier(scan.getAttribute(CDC_JSON_COL_QUALIFIER)) // FIXME: Move this to CDCTableInfo
+                .setQualifier(cdcDataTableInfo.getCdcJsonColQualBytes())
                 .setTimestamp(indexCellTS)
                 .setValue(value)
                 .setType(Cell.Type.Put)
