@@ -18,8 +18,10 @@
 package org.apache.phoenix.end2end;
 
 import org.apache.phoenix.exception.SQLExceptionCode;
+import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PTable;
+import org.apache.phoenix.schema.PTableKey;
 import org.apache.phoenix.util.CDCUtil;
 import org.apache.phoenix.util.PhoenixRuntime;
 import org.junit.Ignore;
@@ -40,6 +42,7 @@ import java.util.Properties;
 
 import static org.apache.phoenix.schema.PTable.QualifierEncodingScheme.NON_ENCODED_QUALIFIERS;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -61,8 +64,7 @@ public class CDCDefinitionIT extends CDCBaseIT {
 
     @Test
     public void testCreate() throws Exception {
-        Properties props = new Properties();
-        Connection conn = DriverManager.getConnection(getUrl(), props);
+        Connection conn = newConnection();
         String tableName = generateUniqueName();
         String datatableName = tableName;
         conn.createStatement().execute(
@@ -86,8 +88,9 @@ public class CDCDefinitionIT extends CDCBaseIT {
         }
 
         cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName;
-        createCDCAndWait(conn, null, tableName, cdcName, cdc_sql);
+        createTable(conn, cdc_sql, null, false, null);
         assertCDCState(conn, cdcName, null, 3);
+        assertNoResults(conn, cdcName);
 
         try {
             conn.createStatement().execute(cdc_sql);
@@ -103,27 +106,66 @@ public class CDCDefinitionIT extends CDCBaseIT {
         cdcName = generateUniqueName();
         cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName +
                 " INCLUDE (pre, post) INDEX_TYPE=g";
-        createCDCAndWait(conn, null, tableName, cdcName, cdc_sql);
+        createTable(conn, cdc_sql, null, false, 0);
         assertCDCState(conn, cdcName, "PRE,POST", 3);
         assertPTable(cdcName, new HashSet<>(
                 Arrays.asList(PTable.CDCChangeScope.PRE, PTable.CDCChangeScope.POST)), tableName,
                 datatableName);
+        assertNoResults(conn, cdcName);
 
         cdcName = generateUniqueName();
         cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName + " INDEX_TYPE=l";
-        createCDCAndWait(conn, null, tableName, cdcName, cdc_sql);
+        createTable(conn, cdc_sql, null, false, 0);
         assertCDCState(conn, cdcName, null, 2);
         assertPTable(cdcName, null, tableName, datatableName);
-
-        // Indexes on views don't support salt buckets and is currently silently ignored.
-        if (! forView) {
-            cdcName = generateUniqueName();
-            cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName;
-            createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, null, 4);
-            assertSaltBuckets(cdcName, 4);
-        }
+        assertNoResults(conn, cdcName);
 
         conn.close();
+    }
+
+    @Test
+    public void testCreateWithSalt() throws Exception {
+        // Indexes on views don't support salt buckets and is currently silently ignored.
+        if (forView) {
+            return;
+        }
+
+        // {data table bucket count, CDC bucket count}
+        Integer[][] saltingConfigs = new Integer[][] {
+                new Integer[]{null, 2},
+                new Integer[]{0, 2},
+                new Integer[]{4, null},
+                new Integer[]{4, 1},
+                new Integer[]{4, 0},
+                new Integer[]{4, 2}
+        };
+
+        for (Integer[] saltingConfig: saltingConfigs) {
+            try (Connection conn = newConnection()) {
+                String tableName = generateUniqueName();
+                createTable(conn, "CREATE TABLE  " + tableName +
+                                " ( k INTEGER PRIMARY KEY, v1 INTEGER, v2 DATE)",
+                                null, false, saltingConfig[0]);
+                assertSaltBuckets(conn, tableName, saltingConfig[0]);
+
+                String cdcName = generateUniqueName();
+                String cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName;
+                createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, null,
+                        saltingConfig[1]);
+                try {
+                    assertCDCState(conn, cdcName, null, 3);
+                    // Index inherits table salt buckets.
+                    assertSaltBuckets(conn, cdcName, null);
+                    assertSaltBuckets(conn, CDCUtil.getCDCIndexName(cdcName),
+                            saltingConfig[1] != null ? saltingConfig[1] : saltingConfig[0]);
+                    assertNoResults(conn, cdcName);
+                } catch (Exception error) {
+                    throw new AssertionError("{tableSaltBuckets=" + saltingConfig[0] + ", " +
+                            "cdcSaltBuckets=" + saltingConfig[1] + "} " + error.getMessage(),
+                            error);
+                }
+            }
+        }
     }
 
     @Ignore // Timing out in IndexTool.

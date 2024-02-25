@@ -1770,7 +1770,8 @@ public class MetaDataClient {
         List<PColumn> pkColumns = dataTable.getPKColumns();
         List<ColumnDef> columnDefs = new ArrayList<>();
         List<ColumnDefInPkConstraint> pkColumnDefs = new ArrayList<>();
-        for (int i = 0; i < pkColumns.size(); ++i) {
+        int pkOffset = dataTable.getBucketNum() != null ? 1 : 0;
+        for (int i = pkOffset; i < pkColumns.size(); ++i) {
             PColumn pcol = pkColumns.get(i);
             columnDefs.add(FACTORY.columnDef(FACTORY.columnName(pcol.getName().getString()),
                     pcol.getDataType().getSqlTypeName(), false, null, false, pcol.getMaxLength(),
@@ -1783,11 +1784,11 @@ public class MetaDataClient {
                 null, false, SortOrder.getDefault(), "", null, false));
         tableProps = new HashMap<>();
         if (dataTable.isMultiTenant()) {
-            tableProps.put(MULTI_TENANT.toString(), Boolean.TRUE);
+            tableProps.put(TableProperty.MULTI_TENANT.getPropertyName(), Boolean.TRUE);
         }
         CreateTableStatement tableStatement = FACTORY.createTable(
                 FACTORY.table(dataTable.getSchemaName().getString(), statement.getCdcObjName().getName()),
-                statement.getProps(), columnDefs, FACTORY.primaryKey(null, pkColumnDefs),
+                null, columnDefs, FACTORY.primaryKey(null, pkColumnDefs),
                 Collections.emptyList(), PTableType.CDC, statement.isIfNotExists(), null, null,
                 statement.getBindCount(), null);
         createTableInternal(tableStatement, null, dataTable, null, null, null,
@@ -2300,7 +2301,7 @@ public class MetaDataClient {
             }
 
             // Can't set any of these on views or shared indexes on views
-            if (tableType != PTableType.VIEW && !allocateIndexId) {
+            if (tableType != PTableType.VIEW && tableType != PTableType.CDC && !allocateIndexId) {
                 saltBucketNum = (Integer) TableProperty.SALT_BUCKETS.getValue(tableProps);
                 if (saltBucketNum != null) {
                     if (saltBucketNum < 0 || saltBucketNum > SaltingUtil.MAX_BUCKET_NUM) {

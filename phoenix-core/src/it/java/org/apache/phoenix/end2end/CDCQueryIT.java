@@ -35,6 +35,7 @@ import java.sql.Connection;
 import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -74,29 +75,31 @@ public class CDCQueryIT extends CDCBaseIT {
     private final boolean dataFirst;
     private final PTable.QualifierEncodingScheme encodingScheme;
     private final boolean multitenant;
-    private final int indexSaltBuckets;
+    private final Integer indexSaltBuckets;
+    private final Integer tableSaltBuckets;
     private ManualEnvironmentEdge injectEdge;
 
     public CDCQueryIT(Boolean forView, Boolean dataFirst,
                       PTable.QualifierEncodingScheme encodingScheme, boolean multitenant,
-                      Integer indexSaltBuckets) {
+                      Integer indexSaltBuckets, Integer tableSaltBuckets) {
         this.forView = forView;
         this.dataFirst = dataFirst;
         this.encodingScheme = encodingScheme;
         this.multitenant = multitenant;
         this.indexSaltBuckets = indexSaltBuckets;
+        this.tableSaltBuckets = tableSaltBuckets;
     }
 
     @Parameterized.Parameters(name = "forView={0} dataFirst={1}, encodingScheme={2}, " +
-            "multitenant={3}, nSbaltBuckets={4}")
+            "multitenant={3}, indexSaltBuckets={4}, tableSaltBuckets={5}")
     public static synchronized Collection<Object[]> data() {
         return Arrays.asList(new Object[][] {
-                { Boolean.FALSE, Boolean.FALSE, TWO_BYTE_QUALIFIERS, Boolean.FALSE, 0 },
-                { Boolean.FALSE, Boolean.TRUE, TWO_BYTE_QUALIFIERS, Boolean.FALSE, 0 },
-                { Boolean.FALSE, Boolean.FALSE, NON_ENCODED_QUALIFIERS, Boolean.TRUE, 0 },
-                { Boolean.FALSE, Boolean.FALSE, NON_ENCODED_QUALIFIERS, Boolean.TRUE, 4 },
-                { Boolean.FALSE, Boolean.FALSE, NON_ENCODED_QUALIFIERS, Boolean.FALSE, 4 },
-                { Boolean.TRUE, Boolean.FALSE, TWO_BYTE_QUALIFIERS, Boolean.FALSE, 0 },
+                { Boolean.FALSE, Boolean.FALSE, TWO_BYTE_QUALIFIERS, Boolean.FALSE, null, null },
+                { Boolean.FALSE, Boolean.TRUE, TWO_BYTE_QUALIFIERS, Boolean.FALSE, null, null },
+                { Boolean.FALSE, Boolean.FALSE, NON_ENCODED_QUALIFIERS, Boolean.FALSE, 1, 1 },
+                { Boolean.FALSE, Boolean.FALSE, NON_ENCODED_QUALIFIERS, Boolean.TRUE, 4, 2 },
+                { Boolean.FALSE, Boolean.FALSE, NON_ENCODED_QUALIFIERS, Boolean.FALSE, 4, null },
+                { Boolean.TRUE, Boolean.FALSE, TWO_BYTE_QUALIFIERS, Boolean.FALSE, null, null },
         });
     }
 
@@ -105,6 +108,83 @@ public class CDCQueryIT extends CDCBaseIT {
         EnvironmentEdgeManager.reset();
         injectEdge = new ManualEnvironmentEdge();
         injectEdge.setValue(EnvironmentEdgeManager.currentTimeMillis());
+    }
+
+    private void addChanges(String[] tenantids, String tableName, String datatableNameForDDL,
+                            boolean withCommitFailure) throws SQLException {
+        EnvironmentEdgeManager.injectEdge(injectEdge);
+        injectEdge.setValue(System.currentTimeMillis());
+        boolean dropV3Done = false;
+        if (withCommitFailure) {
+            IndexRegionObserver.setFailDataTableUpdatesForTesting(true);
+        }
+        for (String tid: tenantids) {
+            try (Connection conn = newConnection(tid)) {
+                conn.createStatement().execute("UPSERT INTO " + tableName +
+                        " (k, v1, v2) VALUES (1, 100, 1000)");
+                injectEdge.incrementValue(100);
+                conn.createStatement().execute("UPSERT INTO " + tableName +
+                        " (k, v1, v2) VALUES (2, 200, 2000)");
+                commit(conn, withCommitFailure);
+                injectEdge.incrementValue(100);
+                conn.createStatement().execute("UPSERT INTO " + tableName +
+                        " (k, v1) VALUES (1, 101)");
+                commit(conn, withCommitFailure);
+                injectEdge.incrementValue(100);
+            }
+            if (datatableNameForDDL != null && !dropV3Done) {
+                try (Connection conn = newConnection()) {
+                    conn.createStatement().execute("ALTER TABLE " + datatableNameForDDL +
+                            " DROP COLUMN v3");
+                }
+                injectEdge.incrementValue(100);
+                dropV3Done = true;
+            }
+            try (Connection conn = newConnection(tid)) {
+                conn.createStatement().execute("DELETE FROM " + tableName +
+                        " WHERE k=1");
+                commit(conn, withCommitFailure);
+                injectEdge.incrementValue(100);
+                conn.createStatement().execute("UPSERT INTO " + tableName +
+                        " (k, v1, v2) VALUES (1, 102, 1002)");
+                commit(conn, withCommitFailure);
+                injectEdge.incrementValue(100);
+                conn.createStatement().execute("DELETE FROM " + tableName +
+                        " WHERE k=1");
+                commit(conn, withCommitFailure);
+                injectEdge.incrementValue(100);
+                conn.createStatement().execute("UPSERT INTO " + tableName +
+                        " (k, v1, v2) VALUES (2, 201, NULL)");
+                commit(conn, withCommitFailure);
+                injectEdge.incrementValue(100);
+                conn.createStatement().execute("UPSERT INTO " + tableName +
+                        " (k, v1, v2) VALUES (1, 103, 1003)");
+                commit(conn, withCommitFailure);
+                injectEdge.incrementValue(100);
+                conn.createStatement().execute("DELETE FROM " + tableName + " WHERE k=1");
+                commit(conn, withCommitFailure);
+                injectEdge.incrementValue(100);
+                conn.createStatement().execute("UPSERT INTO " + tableName +
+                        " (k, v1, v2) VALUES (1, 104, 1004)");
+                commit(conn, withCommitFailure);
+                injectEdge.incrementValue(100);
+                conn.createStatement().execute("DELETE FROM " + tableName + " WHERE k=1");
+                commit(conn, withCommitFailure);
+                injectEdge.incrementValue(100);
+            }
+        }
+        EnvironmentEdgeManager.reset();
+        if (datatableNameForDDL != null) {
+            try (Connection conn = newConnection()) {
+                conn.createStatement().execute("ALTER TABLE " + datatableNameForDDL +
+                        " DROP COLUMN v1v2");
+                conn.createStatement().execute("ALTER TABLE " + datatableNameForDDL +
+                        " ADD v4 INTEGER");
+            }
+        }
+        if (withCommitFailure) {
+            IndexRegionObserver.setFailDataTableUpdatesForTesting(false);
+        }
     }
 
     private void assertResultSet(ResultSet rs, Set<PTable.CDCChangeScope> cdcChangeScopeSet)
@@ -380,11 +460,12 @@ public class CDCQueryIT extends CDCBaseIT {
             createTable(conn, "CREATE TABLE  " + tableName + " (" +
                     (multitenant ? "TENANT_ID CHAR(5) NOT NULL, " : "") +
                     "k INTEGER NOT NULL, v1 INTEGER, v2 INTEGER, CONSTRAINT PK PRIMARY KEY " +
-                    (multitenant ? "(TENANT_ID, k) " : "(k)") + ")", encodingScheme, multitenant);
+                    (multitenant ? "(TENANT_ID, k) " : "(k)") + ")", encodingScheme, multitenant,
+                    tableSaltBuckets);
             if (forView) {
                 String viewName = generateUniqueName();
                 createTable(conn, "CREATE VIEW " + viewName + " AS SELECT * FROM " + tableName,
-                        encodingScheme, false);
+                        encodingScheme);
                 tableName = viewName;
             }
             cdcName = generateUniqueName();
@@ -394,63 +475,22 @@ public class CDCQueryIT extends CDCBaseIT {
             }
         }
 
-        String tenantId = "1000";
+        String tenantId = multitenant ? "1000" : null;
         String[] tenantids = {tenantId};
         if (multitenant) {
             tenantids = new String[] {tenantId, "2000"};
         }
-        for (String tid: tenantids) {
-            try (Connection conn = newConnection(tid)) {
-                EnvironmentEdgeManager.injectEdge(injectEdge);
-                injectEdge.setValue(System.currentTimeMillis());
-                conn.createStatement().execute("UPSERT INTO " + tableName +
-                        " (k, v1, v2) VALUES (1, 100, 1000)");
-                injectEdge.incrementValue(100);
-                conn.createStatement().execute("UPSERT INTO " + tableName +
-                        " (k, v1, v2) VALUES (2, 200, 2000)");
-                conn.commit();
-                injectEdge.incrementValue(100);
-                conn.createStatement().execute("UPSERT INTO " + tableName +
-                        " (k, v1) VALUES (1, 101)");
-                conn.commit();
-                injectEdge.incrementValue(100);
-                conn.createStatement().execute("DELETE FROM " + tableName +
-                        " WHERE k=1");
-                conn.commit();
-                injectEdge.incrementValue(100);
-                conn.createStatement().execute("UPSERT INTO " + tableName +
-                        " (k, v1, v2) VALUES (1, 102, 1002)");
-                conn.commit();
-                injectEdge.incrementValue(100);
-                conn.createStatement().execute("DELETE FROM " + tableName +
-                        " WHERE k=1");
-                conn.commit();
-                injectEdge.incrementValue(100);
-                conn.createStatement().execute("UPSERT INTO " + tableName +
-                        " (k, v1, v2) VALUES (2, 201, NULL)");
-                conn.commit();
-                injectEdge.incrementValue(100);
-                conn.createStatement().execute("UPSERT INTO " + tableName +
-                        " (k, v1, v2) VALUES (1, 103, 1003)");
-                conn.commit();
-                injectEdge.incrementValue(100);
-                conn.createStatement().execute("DELETE FROM " + tableName + " WHERE k=1");
-                conn.commit();
-                injectEdge.incrementValue(100);
-                conn.createStatement().execute("UPSERT INTO " + tableName +
-                        " (k, v1, v2) VALUES (1, 104, 1004)");
-                conn.commit();
-                injectEdge.incrementValue(100);
-                conn.createStatement().execute("DELETE FROM " + tableName + " WHERE k=1");
-                conn.commit();
-                EnvironmentEdgeManager.reset();
-            }
-        }
+
+        addChanges(tenantids, tableName, null, false);
+
         if (dataFirst) {
             try (Connection conn = newConnection()) {
                 createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, encodingScheme, indexSaltBuckets);
             }
         }
+
+        //SingleCellIndexIT.dumpTable(tableName);
+        //SingleCellIndexIT.dumpTable(CDCUtil.getCDCIndexName(cdcName));
 
         try (Connection conn = newConnection(null)) {
             ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM " + tableName);
@@ -498,11 +538,12 @@ public class CDCQueryIT extends CDCBaseIT {
             createTable(conn, "CREATE TABLE  " + tableName + " (" +
                     (multitenant ? "TENANT_ID CHAR(5) NOT NULL, " : "") +
                     "k INTEGER NOT NULL, v1 INTEGER, CONSTRAINT PK PRIMARY KEY " +
-                    (multitenant ? "(TENANT_ID, k) " : "(k)") + ")", encodingScheme, multitenant);
+                    (multitenant ? "(TENANT_ID, k) " : "(k)") + ")", encodingScheme, multitenant,
+                    tableSaltBuckets);
             if (forView) {
                 String viewName = generateUniqueName();
                 createTable(conn, "CREATE VIEW " + viewName + " AS SELECT * FROM " + tableName,
-                        encodingScheme, false);
+                        encodingScheme);
                 tableName = viewName;
             }
             cdcName = generateUniqueName();
@@ -644,11 +685,12 @@ public class CDCQueryIT extends CDCBaseIT {
                     (multitenant ? "TENANT_ID CHAR(5) NOT NULL, " : "") +
                     "k INTEGER NOT NULL, v0 INTEGER, v1 INTEGER, v1v2 INTEGER, v2 INTEGER, " +
                     "v3 INTEGER, CONSTRAINT PK PRIMARY KEY " +
-                    (multitenant ? "(TENANT_ID, k) " : "(k)") + ")", encodingScheme, multitenant);
+                    (multitenant ? "(TENANT_ID, k) " : "(k)") + ")", encodingScheme, multitenant,
+                    tableSaltBuckets);
             if (forView) {
                 String viewName = generateUniqueName();
                 createTable(conn, "CREATE VIEW " + viewName + " AS SELECT * FROM " + tableName,
-                        encodingScheme, false);
+                        encodingScheme);
                 tableName = viewName;
             }
 
@@ -661,52 +703,23 @@ public class CDCQueryIT extends CDCBaseIT {
         }
 
         String tenantId = multitenant ? "1000" : null;
-        try (Connection conn = newConnection(tenantId)) {
-            conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1, v2) VALUES (1, 100, 1000)");
-            conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1, v2) VALUES (2, 200, 2000)");
-            conn.commit();
-            Thread.sleep(10);
-            conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1) VALUES (1, 101)");
-            conn.commit();
+        String[] tenantids = {tenantId};
+        if (multitenant) {
+            tenantids = new String[] {tenantId, "2000"};
         }
-        try (Connection conn = newConnection()) {
-            conn.createStatement().execute("ALTER TABLE " + datatableName + " DROP COLUMN v3");
-        }
-        try (Connection conn = newConnection(tenantId)) {
-            conn.createStatement().execute("DELETE FROM " + tableName + " WHERE k=1");
-            conn.commit();
-            conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1, v2) VALUES (1, 102, 1002)");
-            conn.commit();
-            conn.createStatement().execute("DELETE FROM " + tableName + " WHERE k=1");
-            conn.commit();
-            conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1, v2) VALUES (2, 201, NULL)");
-            conn.commit();
-            Thread.sleep(10);
-            conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1, v2) VALUES (1, 103, 1003)");
-            conn.commit();
-            Thread.sleep(10);
-            conn.createStatement().execute("DELETE FROM " + tableName + " WHERE k=1");
-            conn.commit();
-            Thread.sleep(10);
-            conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1, v2) VALUES (1, 104, 1004)");
-            conn.commit();
-            Thread.sleep(10);
-            conn.createStatement().execute("DELETE FROM " + tableName + " WHERE k=1");
-            conn.commit();
-        }
-        try (Connection conn = newConnection()) {
-            conn.createStatement().execute("ALTER TABLE " + datatableName + " DROP COLUMN v1v2");
-            conn.createStatement().execute("ALTER TABLE " + datatableName + " ADD v4 INTEGER");
-        }
+
+        addChanges(tenantids, tableName, datatableName, false);
 
         if (dataFirst) {
             try (Connection conn = newConnection()) {
-                createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, encodingScheme, indexSaltBuckets);
+                createCDCAndWait(conn, null, tableName, cdcName, cdc_sql,
+                        encodingScheme, indexSaltBuckets);
             }
         }
 
         try (Connection conn = newConnection(tenantId)) {
-            assertResultSet(conn.createStatement().executeQuery("SELECT * FROM " + cdcName), null);
+            assertResultSet(conn.createStatement().executeQuery("SELECT * FROM " + cdcName),
+            null);
         }
     }
 
@@ -765,11 +778,12 @@ public class CDCQueryIT extends CDCBaseIT {
                     (multitenant ? "TENANT_ID CHAR(5) NOT NULL, " : "") +
                     "k INTEGER NOT NULL, a_binary binary(10), d Date, t TIMESTAMP, " +
                     "CONSTRAINT PK PRIMARY KEY " +
-                    (multitenant ? "(TENANT_ID, k) " : "(k)") + ")", encodingScheme, multitenant);
+                    (multitenant ? "(TENANT_ID, k) " : "(k)") + ")", encodingScheme, multitenant,
+                    tableSaltBuckets);
             if (forView) {
                 String viewName = generateUniqueName();
                 createTable(conn, "CREATE VIEW " + viewName + " AS SELECT * FROM " + tableName,
-                        encodingScheme, false);
+                        encodingScheme);
                 tableName = viewName;
             }
             cdcName = generateUniqueName();
@@ -817,84 +831,51 @@ public class CDCQueryIT extends CDCBaseIT {
             // index failure.
             return;
         }
-        Connection conn = newConnection();
         String tableName = generateUniqueName();
-        createTable(conn, "CREATE TABLE  " + tableName +
-                " ( k INTEGER PRIMARY KEY," + " v1 INTEGER, v2 INTEGER)", encodingScheme);
-        if (forView) {
-            String viewName = generateUniqueName();
-            createTable(conn, "CREATE VIEW " + viewName + " AS SELECT * FROM " + tableName,
-                    encodingScheme);
-            tableName = viewName;
-        }
-        String cdcName = generateUniqueName();
-        String cdc_sql = "CREATE CDC " + cdcName
-                + " ON " + tableName;
-        if (! dataFirst) {
-            createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, encodingScheme, indexSaltBuckets);
-        }
-        IndexRegionObserver.setFailDataTableUpdatesForTesting(true);
-        EnvironmentEdgeManager.injectEdge(injectEdge);
-        injectEdge.setValue(System.currentTimeMillis());
-        conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1, v2) VALUES (1, 100, 1000)");
-        injectEdge.incrementValue(100);
-        conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1, v2) VALUES (2, 200, 2000)");
-        commitWithException(conn);
-
-        injectEdge.incrementValue(100);
-        conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1) VALUES (1, 101)");
-        commitWithException(conn);
-
-        injectEdge.incrementValue(100);
-        conn.createStatement().execute("DELETE FROM " + tableName + " WHERE k=1");
-        commitWithException(conn);
-
-        injectEdge.incrementValue(100);
-        conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1, v2) VALUES (1, 102, 1002)");
-        commitWithException(conn);
-
-        injectEdge.incrementValue(100);
-        conn.createStatement().execute("DELETE FROM " + tableName + " WHERE k=1");
-        commitWithException(conn);
-
-        injectEdge.incrementValue(100);
-        conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1, v2) VALUES (2, 201, NULL)");
-        commitWithException(conn);
-
-        injectEdge.incrementValue(100);
-        conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1, v2) VALUES (1, 103, 1003)");
-        commitWithException(conn);
-
-        injectEdge.incrementValue(100);
-        conn.createStatement().execute("DELETE FROM " + tableName + " WHERE k=1");
-        commitWithException(conn);
-
-        injectEdge.incrementValue(100);
-        conn.createStatement().execute("UPSERT INTO " + tableName + " (k, v1, v2) VALUES (1, 104, 1004)");
-        commitWithException(conn);
-
-        injectEdge.incrementValue(100);
-        conn.createStatement().execute("DELETE FROM " + tableName + " WHERE k=1");
-        commitWithException(conn);
-        IndexRegionObserver.setFailDataTableUpdatesForTesting(false);
-        EnvironmentEdgeManager.reset();
-
-        if (dataFirst) {
+        String cdcName, cdc_sql;
+        try (Connection conn = newConnection()) {
+            createTable(conn, "CREATE TABLE  " + tableName + " (" +
+                            (multitenant ? "TENANT_ID CHAR(5) NOT NULL, " : "") +
+                            "k INTEGER NOT NULL, v1 INTEGER, v2 INTEGER, " +
+                            "CONSTRAINT PK PRIMARY KEY " +
+                            (multitenant ? "(TENANT_ID, k) " : "(k)") + ")", encodingScheme, multitenant,
+                    tableSaltBuckets);
+            if (forView) {
+                String viewName = generateUniqueName();
+                createTable(conn, "CREATE VIEW " + viewName + " AS SELECT * FROM " + tableName,
+                        encodingScheme);
+                tableName = viewName;
+            }
+            cdcName = generateUniqueName();
+            cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName;
             createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, encodingScheme, indexSaltBuckets);
         }
 
-        ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM " + cdcName);
-        assertEquals(false, rs.next());
+        String tenantId = multitenant ? "1000" : null;
+        String[] tenantids = {tenantId};
+        if (multitenant) {
+            tenantids = new String[] {tenantId, "2000"};
+        }
+
+        addChanges(tenantids, tableName, null, true);
+
+        try (Connection conn = newConnection(tenantId)) {
+            ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM " + cdcName);
+            assertEquals(false, rs.next());
+        }
     }
 
-    static private void commitWithException(Connection conn) {
+    static private void commit(Connection conn, boolean exceptionExpected) throws SQLException {
         try {
             conn.commit();
-            IndexRegionObserver.setFailPreIndexUpdatesForTesting(false);
-            IndexRegionObserver.setFailDataTableUpdatesForTesting(false);
-            IndexRegionObserver.setFailPostIndexUpdatesForTesting(false);
-            fail();
-        } catch (Exception e) {
+            if (exceptionExpected) {
+                // It is config issue commit didn't fail.
+                fail("Commit expected to fail");
+            }
+        } catch (SQLException e) {
+            if (! exceptionExpected) {
+                throw e;
+            }
             // this is expected
         }
     }
