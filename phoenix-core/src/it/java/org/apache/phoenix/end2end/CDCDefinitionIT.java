@@ -276,7 +276,7 @@ public class CDCDefinitionIT extends CDCBaseIT {
         }
         String cdcName = generateUniqueName();
         String cdc_sql = "CREATE CDC  " + cdcName + " ON " + tableName;
-        conn.createStatement().execute(cdc_sql);
+        createCDCAndWait(conn, null, tableName, cdcName, cdc_sql);
         try {
             conn.createStatement().executeQuery("SELECT " +
                     "/*+ CDC_INCLUDE(DUMMY) */ * FROM " + cdcName);
