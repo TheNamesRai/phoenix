@@ -1,6 +1,5 @@
 package org.apache.phoenix.end2end;
 
-import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.query.QueryServicesOptions;
 import org.apache.phoenix.schema.PIndexState;
 import org.apache.phoenix.schema.PTable;
@@ -69,7 +68,9 @@ public class CDCBaseIT extends ParallelStatsDisabledIT {
         createTable(conn, cdc_sql, encodingScheme, false, nSaltBuckets);
         IndexToolIT.runIndexTool(false, schemaName, tableName,
                 "\""+CDCUtil.getCDCIndexName(cdcName)+"\"");
-        TestUtil.waitForIndexState(conn, CDCUtil.getCDCIndexName(cdcName), PIndexState.ACTIVE);
+        String indexFullName = (schemaName != null ? schemaName + "." : "") +
+                CDCUtil.getCDCIndexName(cdcName);
+        TestUtil.waitForIndexState(conn, indexFullName, PIndexState.ACTIVE);
     }
 
     protected void assertCDCState(Connection conn, String cdcName, String expInclude,
@@ -88,28 +89,26 @@ public class CDCBaseIT extends ParallelStatsDisabledIT {
         }
     }
 
-    protected void assertPTable(String cdcName, Set<PTable.CDCChangeScope> expIncludeScopes,
+    protected void assertPTable(String schemaName, String cdcName,
+                                Set<PTable.CDCChangeScope> expIncludeScopes,
                                 String tableName, String datatableName)
             throws SQLException {
         Properties props = new Properties();
         Connection conn = DriverManager.getConnection(getUrl(), props);
-        PTable table = PhoenixRuntime.getTable(conn, cdcName);
-        assertEquals(expIncludeScopes, table.getCDCIncludeScopes());
-        assertEquals(expIncludeScopes, TableProperty.INCLUDE.getPTableValue(table));
-        assertNull(table.getIndexState()); // Index state should be null for CDC.
-        assertNull(table.getIndexType()); // This is not an index.
-        assertEquals(tableName, table.getParentName().getString());
-        assertEquals(table.getPhysicalName().getString(),
-                tableName == datatableName ? CDCUtil.getCDCIndexName(cdcName) :
-                        getViewIndexPhysicalName(datatableName));
-    }
-
-    protected void assertCDCSaltBuckets(String cdcName, Integer nbuckets) throws SQLException {
-        Properties props = new Properties();
-        Connection conn = DriverManager.getConnection(getUrl(), props);
-        PTable cdcTable = PhoenixRuntime.getTable(conn, cdcName);
-        assertSaltBuckets(cdcTable, nbuckets);
-        assertSaltBuckets(conn, CDCUtil.getCDCIndexName(cdcName), nbuckets);
+        String cdcFullName = (schemaName != null ? schemaName + "." : "") + cdcName;
+        PTable cdcTable = PhoenixRuntime.getTable(conn, cdcFullName);
+        assertEquals(expIncludeScopes, cdcTable.getCDCIncludeScopes());
+        assertEquals(expIncludeScopes, TableProperty.INCLUDE.getPTableValue(cdcTable));
+        assertNull(cdcTable.getIndexState()); // Index state should be null for CDC.
+        assertNull(cdcTable.getIndexType()); // This is not an index.
+        String tableFullName = (schemaName != null ? schemaName + "." : "") + tableName;
+        assertEquals(tableFullName, cdcTable.getParentName().getString());
+        String datatableFullName = datatableName == null ?
+                 tableFullName : (schemaName != null ? schemaName + "." : "") + datatableName;
+        String indexFullName = (schemaName != null ? schemaName + "." : "") +
+                CDCUtil.getCDCIndexName(cdcName);
+        assertEquals(cdcTable.getPhysicalName().getString(), tableName == datatableName ?
+                indexFullName : getViewIndexPhysicalName(datatableFullName));
     }
 
     protected void assertSaltBuckets(Connection conn, String tableName, Integer nbuckets)

@@ -18,13 +18,10 @@
 package org.apache.phoenix.end2end;
 
 import org.apache.phoenix.exception.SQLExceptionCode;
-import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PTable;
-import org.apache.phoenix.schema.PTableKey;
 import org.apache.phoenix.util.CDCUtil;
 import org.apache.phoenix.util.PhoenixRuntime;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
@@ -108,7 +105,7 @@ public class CDCDefinitionIT extends CDCBaseIT {
                 " INCLUDE (pre, post) INDEX_TYPE=g";
         createTable(conn, cdc_sql, null, false, 0);
         assertCDCState(conn, cdcName, "PRE,POST", 3);
-        assertPTable(cdcName, new HashSet<>(
+        assertPTable(null, cdcName, new HashSet<>(
                 Arrays.asList(PTable.CDCChangeScope.PRE, PTable.CDCChangeScope.POST)), tableName,
                 datatableName);
         assertNoResults(conn, cdcName);
@@ -117,7 +114,7 @@ public class CDCDefinitionIT extends CDCBaseIT {
         cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName + " INDEX_TYPE=l";
         createTable(conn, cdc_sql, null, false, 0);
         assertCDCState(conn, cdcName, null, 2);
-        assertPTable(cdcName, null, tableName, datatableName);
+        assertPTable(null, cdcName, null, tableName, datatableName);
         assertNoResults(conn, cdcName);
 
         conn.close();
@@ -168,7 +165,6 @@ public class CDCDefinitionIT extends CDCBaseIT {
         }
     }
 
-    @Ignore // Timing out in IndexTool.
     @Test
     public void testCreateWithSchemaName() throws Exception {
         Properties props = new Properties();
@@ -200,7 +196,7 @@ public class CDCDefinitionIT extends CDCBaseIT {
         cdc_sql = "CREATE CDC " + cdcName + " ON " + schemaName + "." + tableName;
         createCDCAndWait(conn, schemaName, tableName, cdcName, cdc_sql);
         assertCDCState(conn, cdcName, null, 3);
-        assertPTable(cdcName, null, tableName, datatableName);
+        assertPTable(schemaName, cdcName, null, tableName, datatableName);
     }
 
     @Test
