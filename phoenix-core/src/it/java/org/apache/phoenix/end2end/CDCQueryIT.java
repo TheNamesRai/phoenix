@@ -58,6 +58,8 @@ import static org.apache.phoenix.query.QueryConstants.CDC_UPSERT_EVENT_TYPE;
 import static org.apache.phoenix.schema.PTable.QualifierEncodingScheme.NON_ENCODED_QUALIFIERS;
 import static org.apache.phoenix.schema.PTable.QualifierEncodingScheme.TWO_BYTE_QUALIFIERS;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 // NOTE: To debug the query execution, add the below condition or the equivalent where you need a
@@ -66,16 +68,6 @@ import static org.junit.Assert.fail;
 //                 <table>.getTableName().getString().equals("__CDC__N000002")) {
 //          "".isEmpty();
 //      }
-// Use for debugging and comparing state between query using uncovered index and CDC
-//try (ResultSet rs =
-//        conn.createStatement().executeQuery("select " + " /*+ INDEX(" + tableName +
-//                " " +
-//                CDCUtil.getCDCIndexName(cdcName) + ") */ * from " + tableName)) {
-//    while(rs.next());
-//}
-//try (ResultSet rs = conn.createStatement().executeQuery("select * from " + cdcName)) {
-//    while(rs.next());
-//}
 @RunWith(Parameterized.class)
 @Category(ParallelStatsDisabledTest.class)
 public class CDCQueryIT extends CDCBaseIT {
@@ -515,11 +507,6 @@ public class CDCQueryIT extends CDCBaseIT {
         //SingleCellIndexIT.dumpTable(tableName);
         //SingleCellIndexIT.dumpTable(CDCUtil.getCDCIndexName(cdcName));
 
-        try (Connection conn = newConnection(null)) {
-            ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM " + tableName);
-            // TODO: Check RS, existence of CDC shouldn't cause the regular query path to fail.
-        }
-
         String cdcFullName = SchemaUtil.getTableName(schemaName, cdcName);
         try (Connection conn = newConnection(tenantId)) {
             assertResultSet(conn.createStatement().executeQuery("SELECT * FROM " + cdcFullName),
@@ -532,15 +519,15 @@ public class CDCQueryIT extends CDCBaseIT {
                     "PHOENIX_ROW_TIMESTAMP(), K, \"CDC JSON\" FROM " + cdcFullName), null);
 
             HashMap<String, int[]> testQueries = new HashMap<String, int[]>() {{
-                put("SELECT 'dummy', k FROM " + cdcFullName, new int[]{1, 2, 1, 1, 1, 1, 2, 1, 1, 1,
-                        1});
+                put("SELECT 'dummy', k FROM " + cdcFullName,
+                        new int[]{1, 2, 1, 1, 1, 1, 2, 1, 1, 1, 1});
                 put("SELECT PHOENIX_ROW_TIMESTAMP(), k FROM " + cdcFullName +
                         " ORDER BY k ASC", new int[]{1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2});
                 put("SELECT PHOENIX_ROW_TIMESTAMP(), k FROM " + cdcFullName +
                         " ORDER BY k DESC", new int[]{2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1});
-                //put("SELECT PHOENIX_ROW_TIMESTAMP(), k FROM " + cdcName +
-                //        " ORDER BY PHOENIX_ROW_TIMESTAMP() DESC", new int[]{1, 1, 1, 1, 2, 1, 1, 1,
-                //        2, 1});
+                put("SELECT PHOENIX_ROW_TIMESTAMP(), k FROM " + cdcFullName +
+                        " ORDER BY PHOENIX_ROW_TIMESTAMP() DESC",
+                        new int[]{1, 1, 1, 1, 2, 1, 1, 1, 1, 2, 1});
             }};
             for (Map.Entry<String, int[]> testQuery : testQueries.entrySet()) {
                 try (ResultSet rs = conn.createStatement().executeQuery(testQuery.getKey())) {
@@ -552,6 +539,16 @@ public class CDCQueryIT extends CDCBaseIT {
                     }
                     assertEquals(false, rs.next());
                 }
+            }
+
+            // Existence of CDC shouldn't cause the regular query path to fail.
+            String uncovered_sql = "SELECT " + " /*+ INDEX(" + tableName + " " +
+                    CDCUtil.getCDCIndexName(cdcName) + ") */ k, v1 FROM " + tableName;
+            try (ResultSet rs = conn.createStatement().executeQuery(uncovered_sql)) {
+                assertTrue(rs.next());
+                assertEquals(2, rs.getInt(1));
+                assertEquals(201, rs.getInt(2));
+                assertFalse(rs.next());
             }
         }
     }
@@ -640,7 +637,6 @@ public class CDCQueryIT extends CDCBaseIT {
             }
         }
 
-        // FIXME: Retry with real sleeps.
         injectEdge.incrementValue(100);
         cal.add(Calendar.MILLISECOND, 200 + 100 * tenantids.length);
         Timestamp ts4 = new Timestamp(cal.getTime().getTime());
