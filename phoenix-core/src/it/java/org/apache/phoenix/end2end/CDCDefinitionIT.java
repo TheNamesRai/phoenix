@@ -22,6 +22,7 @@ import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.util.CDCUtil;
 import org.apache.phoenix.util.PhoenixRuntime;
+import org.apache.phoenix.util.SchemaUtil;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
@@ -105,7 +106,7 @@ public class CDCDefinitionIT extends CDCBaseIT {
                 " INCLUDE (pre, post) INDEX_TYPE=g";
         createTable(conn, cdc_sql, null, false, 0);
         assertCDCState(conn, cdcName, "PRE,POST", 3);
-        assertPTable(null, cdcName, new HashSet<>(
+        assertPTable(cdcName, new HashSet<>(
                 Arrays.asList(PTable.CDCChangeScope.PRE, PTable.CDCChangeScope.POST)), tableName,
                 datatableName);
         assertNoResults(conn, cdcName);
@@ -114,7 +115,7 @@ public class CDCDefinitionIT extends CDCBaseIT {
         cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName + " INDEX_TYPE=l";
         createTable(conn, cdc_sql, null, false, 0);
         assertCDCState(conn, cdcName, null, 2);
-        assertPTable(null, cdcName, null, tableName, datatableName);
+        assertPTable(cdcName, null, tableName, datatableName);
         assertNoResults(conn, cdcName);
 
         conn.close();
@@ -147,7 +148,7 @@ public class CDCDefinitionIT extends CDCBaseIT {
 
                 String cdcName = generateUniqueName();
                 String cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName;
-                createCDCAndWait(conn, null, tableName, cdcName, cdc_sql, null,
+                createCDCAndWait(conn, tableName, cdcName, cdc_sql, null,
                         saltingConfig[1]);
                 try {
                     assertCDCState(conn, cdcName, null, 3);
@@ -170,16 +171,15 @@ public class CDCDefinitionIT extends CDCBaseIT {
         Properties props = new Properties();
         Connection conn = DriverManager.getConnection(getUrl(), props);
         String schemaName = generateUniqueName();
-        String tableName = generateUniqueName();
+        String tableName = SchemaUtil.getTableName(schemaName, generateUniqueName());
         String datatableName = tableName;
         conn.createStatement().execute(
-                "CREATE TABLE  " + schemaName + "." + tableName + " ( k INTEGER PRIMARY KEY," +
+                "CREATE TABLE  " + tableName + " ( k INTEGER PRIMARY KEY," +
                         " v1 INTEGER, v2 DATE)");
         if (forView) {
-            String viewName = generateUniqueName();
+            String viewName = SchemaUtil.getTableName(schemaName, generateUniqueName());
             conn.createStatement().execute(
-                    "CREATE VIEW " + schemaName + "." + viewName + " AS SELECT * FROM " +
-                    schemaName + "."+ tableName);
+                    "CREATE VIEW " + viewName + " AS SELECT * FROM " + tableName);
             tableName = viewName;
         }
         String cdcName = generateUniqueName();
@@ -193,10 +193,10 @@ public class CDCDefinitionIT extends CDCBaseIT {
             assertEquals(SQLExceptionCode.TABLE_UNDEFINED.getErrorCode(), e.getErrorCode());
         }
 
-        cdc_sql = "CREATE CDC " + cdcName + " ON " + schemaName + "." + tableName;
-        createCDCAndWait(conn, schemaName, tableName, cdcName, cdc_sql);
+        cdc_sql = "CREATE CDC " + cdcName + " ON " + tableName;
+        createCDCAndWait(conn, tableName, cdcName, cdc_sql);
         assertCDCState(conn, cdcName, null, 3);
-        assertPTable(schemaName, cdcName, null, tableName, datatableName);
+        assertPTable(cdcName, null, tableName, datatableName);
     }
 
     @Test
@@ -314,7 +314,7 @@ public class CDCDefinitionIT extends CDCBaseIT {
         }
         String cdcName = generateUniqueName();
         String cdc_sql = "CREATE CDC  " + cdcName + " ON " + tableName;
-        createCDCAndWait(conn, null, tableName, cdcName, cdc_sql);
+        createCDCAndWait(conn, tableName, cdcName, cdc_sql);
         try {
             conn.createStatement().executeQuery("SELECT " +
                     "/*+ CDC_INCLUDE(DUMMY) */ * FROM " + cdcName);

@@ -251,7 +251,7 @@ public class QueryOptimizer {
             }
             indexBuilder.setColumns(idxColumns);
             indexBuilder.setParentName(table.getName());
-            indexBuilder.setParentTableName(table.getName());
+            indexBuilder.setParentTableName(table.getTableName());
             cdcIndex = indexBuilder.build();
             indexTableRef.setTable(cdcIndex);
 
