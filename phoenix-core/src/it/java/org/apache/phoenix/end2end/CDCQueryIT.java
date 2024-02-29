@@ -65,6 +65,16 @@ import static org.junit.Assert.fail;
 //                 <table>.getTableName().getString().equals("__CDC__N000002")) {
 //          "".isEmpty();
 //      }
+// Use for debugging and comparing state between query using uncovered index and CDC
+//try (ResultSet rs =
+//        conn.createStatement().executeQuery("select " + " /*+ INDEX(" + tableName +
+//                " " +
+//                CDCUtil.getCDCIndexName(cdcName) + ") */ * from " + tableName)) {
+//    while(rs.next());
+//}
+//try (ResultSet rs = conn.createStatement().executeQuery("select * from " + cdcName)) {
+//    while(rs.next());
+//}
 @RunWith(Parameterized.class)
 @Category(ParallelStatsDisabledTest.class)
 public class CDCQueryIT extends CDCBaseIT {
