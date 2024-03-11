@@ -50,6 +50,7 @@ import java.sql.Types;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -124,9 +125,9 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
             boolean isChangeImageInScope =
                     this.cdcDataTableInfo.getIncludeScopes().contains(PTable.CDCChangeScope.CHANGE);
             boolean isPreImageInScope =
-                    !isSingleCell && this.cdcDataTableInfo.getIncludeScopes().contains(PTable.CDCChangeScope.PRE);
+                    this.cdcDataTableInfo.getIncludeScopes().contains(PTable.CDCChangeScope.PRE);
             boolean isPostImageInScope =
-                    !isSingleCell && this.cdcDataTableInfo.getIncludeScopes().contains(PTable.CDCChangeScope.POST);
+                    this.cdcDataTableInfo.getIncludeScopes().contains(PTable.CDCChangeScope.POST);
             if (isPreImageInScope || isPostImageInScope) {
                 preImageObj = new HashMap<>();
             }
@@ -145,6 +146,9 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
                             this.cdcDataTableInfo.getColumnInfoList();
                     cellLoop:
                     for (Cell cell : dataRow.rawCells()) {
+                        if (cell.getTimestamp() > indexCellTS) {
+                            continue;
+                        }
                         byte[] cellFam = ImmutableBytesPtr.cloneCellFamilyIfNecessary(cell);
                         byte[] cellQual = ImmutableBytesPtr.cloneCellQualifierIfNecessary(cell);
                         if (cell.getType() == Cell.Type.DeleteFamily) {
@@ -160,25 +164,48 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
                         } else if ((cell.getType() == Cell.Type.DeleteColumn
                                 || cell.getType() == Cell.Type.Put)
                                 && !Arrays.equals(cellQual, emptyCQ)) {
-                            while (curColumnNum < cdcColumnInfoList.size()) {
+                            boolean preChange = (cell.getTimestamp() < indexCellTS
+                                    && cell.getTimestamp() > lowerBoundTsForPreImage) ? true: false;
+                            // In this case, cell is the row, meaning we loop over rows..
+                            if (isSingleCell) {
+                                ResultTuple rowTuple = new ResultTuple(Result.create(
+                                                Collections.singletonList(cell)));
+                                while (curColumnNum < cdcColumnInfoList.size()) {
+                                    CDCTableInfo.CDCColumnInfo currentColumnInfo =
+                                            cdcColumnInfoList.get(curColumnNum);
+                                    String cdcColumnName = currentColumnInfo.getColumnDisplayName(
+                                            cdcDataTableInfo);
+                                    boolean hasValue = dataTableProjector.getSchema().
+                                            extractValue(rowTuple, expressions[curColumnNum],
+                                                    ptr);
+                                    Object cellValue = hasValue ?
+                                            getColumnValue(ptr.get(), ptr.getOffset(),
+                                                    ptr.getLength(),
+                                                    currentColumnInfo.getColumnType())
+                                            : null;
+                                    if (preChange) {
+                                        if (isPreImageInScope || isPostImageInScope) {
+                                            preImageObj.put(cdcColumnName, cellValue);
+                                        }
+                                    } else {
+                                        foundDataTableCellForUpsert = true;
+                                        if (isChangeImageInScope || isPostImageInScope) {
+                                            changeImageObj.put(cdcColumnName, cellValue);
+                                        }
+                                    }
+                                    ++curColumnNum;
+                                }
+                                break cellLoop;
+                            }
+                            while (true) {
                                 CDCTableInfo.CDCColumnInfo currentColumnInfo =
                                         cdcColumnInfoList.get(curColumnNum);
-                                if (isSingleCell) {
-                                    boolean hasValue = dataTableProjector.getSchema().extractValue(
-                                            new ResultTuple(dataRow), expressions[curColumnNum],
-                                            ptr);
-                                    changeImageObj.put(getColumnDisplayName(currentColumnInfo),
-                                            hasValue ? getColumnValue(ptr.get(), ptr.getOffset(),
-                                                    ptr.getLength(),
-                                                    currentColumnInfo.getColumnType()) : null);
-                                    foundDataTableCellForUpsert = true;
-                                    ++curColumnNum;
-                                    continue;
-                                }
+                                String cdcColumnName = currentColumnInfo.getColumnDisplayName(
+                                        cdcDataTableInfo);
                                 int columnComparisonResult = CDCUtil.compareCellFamilyAndQualifier(
-                                        cellFam, cellQual,
-                                        currentColumnInfo.getColumnFamily(),
-                                        currentColumnInfo.getColumnQualifier());
+                                                cellFam, cellQual,
+                                                currentColumnInfo.getColumnFamily(),
+                                                currentColumnInfo.getColumnQualifier());
                                 if (columnComparisonResult > 0) {
                                     if (++curColumnNum >= cdcColumnInfoList.size()) {
                                         // Have no more column definitions, so the rest of the cells
@@ -195,25 +222,20 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
                                 }
 
                                 // else, found the column definition.
-                                if (cell.getTimestamp() < indexCellTS
-                                        && cell.getTimestamp() > lowerBoundTsForPreImage) {
+                                Object cellValue = getColumnValue(cell, cdcColumnInfoList
+                                        .get(curColumnNum).getColumnType());
+                                if (preChange) {
                                     if (isPreImageInScope || isPostImageInScope) {
-                                        String cdcColumnName = getColumnDisplayName(
-                                                currentColumnInfo);
                                         if (preImageObj.containsKey(cdcColumnName)) {
                                             // Ignore current cell, continue with the rest.
                                             continue cellLoop;
                                         }
-                                        preImageObj.put(cdcColumnName,
-                                                this.getColumnValue(cell, cdcColumnInfoList
-                                                        .get(curColumnNum).getColumnType()));
+                                        preImageObj.put(cdcColumnName, cellValue);
                                     }
                                 } else if (cell.getTimestamp() == indexCellTS) {
                                     foundDataTableCellForUpsert = true;
                                     if (isChangeImageInScope || isPostImageInScope) {
-                                        changeImageObj.put(getColumnDisplayName(currentColumnInfo),
-                                                this.getColumnValue(cell, cdcColumnInfoList
-                                                        .get(curColumnNum).getColumnType()));
+                                        changeImageObj.put(cdcColumnName, cellValue);
                                     }
                                 }
                                 // Done processing the current column, look for other columns.
@@ -262,19 +284,6 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
             }
         }
         return false;
-    }
-
-    private String getColumnDisplayName(CDCTableInfo.CDCColumnInfo currentColumnInfo) {
-        String cdcColumnName;
-        // Don't include Column Family if it is a default column Family
-        if (Arrays.equals(currentColumnInfo.getColumnFamily(),
-                cdcDataTableInfo.getDefaultColumnFamily())) {
-            cdcColumnName = currentColumnInfo.getColumnName();
-        } else {
-            cdcColumnName = currentColumnInfo.getColumnFamilyName()
-                    + NAME_SEPARATOR + currentColumnInfo.getColumnName();
-        }
-        return cdcColumnName;
     }
 
     private Result getCDCImage(byte[] indexRowKey, Map<String, Object> preImageObj,

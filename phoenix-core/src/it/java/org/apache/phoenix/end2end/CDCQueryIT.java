@@ -18,7 +18,6 @@
 package org.apache.phoenix.end2end;
 
 import com.google.gson.Gson;
-import org.apache.phoenix.end2end.index.SingleCellIndexIT;
 import org.apache.phoenix.execute.DescVarLengthFastByteComparisons;
 import org.apache.phoenix.hbase.index.IndexRegionObserver;
 import org.apache.phoenix.schema.PTable;
@@ -26,7 +25,6 @@ import org.apache.phoenix.util.CDCUtil;
 import org.apache.phoenix.util.EnvironmentEdgeManager;
 import org.apache.phoenix.util.ManualEnvironmentEdge;
 import org.apache.phoenix.util.SchemaUtil;
-import org.apache.phoenix.util.TestUtil;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
@@ -38,6 +36,7 @@ import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -887,8 +886,8 @@ public class CDCQueryIT extends CDCBaseIT {
         rs.close();
     }
 
-    @Test
-    public void testSelectCDCImmutable() throws Exception {
+    private void _testSelectCDCImmutable(PTable.ImmutableStorageScheme immutableStorageScheme)
+            throws Exception {
         String cdcName, cdc_sql;
         String schemaName = withSchemaName ? generateUniqueName() : null;
         String tableName = SchemaUtil.getTableName(schemaName, generateUniqueName());
@@ -897,7 +896,7 @@ public class CDCQueryIT extends CDCBaseIT {
                             (multitenant ? "TENANT_ID CHAR(5) NOT NULL, " : "") +
                             "k INTEGER NOT NULL, v1 INTEGER, v2 INTEGER, CONSTRAINT PK PRIMARY KEY " +
                             (multitenant ? "(TENANT_ID, k) " : "(k)") + ")", encodingScheme, multitenant,
-                    tableSaltBuckets, true, PTable.ImmutableStorageScheme.ONE_CELL_PER_COLUMN);
+                    tableSaltBuckets, true, immutableStorageScheme);
             if (forView) {
                 String viewName = SchemaUtil.getTableName(schemaName, generateUniqueName());
                 createTable(conn, "CREATE VIEW " + viewName + " AS SELECT * FROM " + tableName,
@@ -929,17 +928,38 @@ public class CDCQueryIT extends CDCBaseIT {
 
         String cdcFullName = SchemaUtil.getTableName(schemaName, cdcName);
         try (Connection conn = newConnection(tenantId)) {
+            // For debug: uncomment to see the exact results logged to console.
+            try (Statement stmt = conn.createStatement()) {
+                try (ResultSet rs = stmt.executeQuery(
+                        "SELECT /*+ CDC_INCLUDE(PRE, POST) */ PHOENIX_ROW_TIMESTAMP(), K, \"CDC JSON\" FROM " +
+                        cdcFullName)) {
+                    while (rs.next()) {
+                        System.out.println("----- " + rs.getString(1) + " " +
+                                rs.getInt(2) + " " + rs.getString(3));
+                    }
+                }
+            }
             assertResultSetImmutableTable(conn.createStatement()
                             .executeQuery("SELECT /*+ CDC_INCLUDE(CHANGE) */ * FROM " + cdcFullName),
                     new HashSet<>(Arrays.asList(PTable.CDCChangeScope.CHANGE)));
             assertResultSetImmutableTable(conn.createStatement().executeQuery("SELECT " +
                             "/*+ CDC_INCLUDE(PRE, POST) */ * FROM " + cdcFullName),
-                    new HashSet<PTable.CDCChangeScope>(
+                    new HashSet<>(
                             Arrays.asList(PTable.CDCChangeScope.PRE, PTable.CDCChangeScope.POST)));
             assertResultSetImmutableTable(conn.createStatement().executeQuery("SELECT /*+ CDC_INCLUDE(CHANGE) */ " +
                     "PHOENIX_ROW_TIMESTAMP(), K, \"CDC JSON\" FROM " + cdcFullName),
                     new HashSet<>(Arrays.asList(PTable.CDCChangeScope.CHANGE)));
         }
+    }
+
+    @Test
+    public void testSelectCDCImmutableOneCellPerColumn() throws Exception {
+        _testSelectCDCImmutable(PTable.ImmutableStorageScheme.ONE_CELL_PER_COLUMN);
+    }
+
+    @Test
+    public void testSelectCDCImmutableSingleCell() throws Exception {
+        _testSelectCDCImmutable(PTable.ImmutableStorageScheme.SINGLE_CELL_ARRAY_WITH_OFFSETS);
     }
 
     @Test

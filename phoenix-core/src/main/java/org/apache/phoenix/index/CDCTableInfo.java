@@ -37,11 +37,13 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
 import static org.apache.phoenix.query.QueryConstants.CDC_JSON_COL_NAME;
+import static org.apache.phoenix.query.QueryConstants.NAME_SEPARATOR;
 
 
 /**
@@ -186,6 +188,7 @@ public class CDCTableInfo {
         private String columnName;
         private PDataType columnType;
         private String columnFamilyName;
+        private String columnDisplayName;
 
         public CDCColumnInfo(byte[] columnFamily, byte[] columnQualifier,
                              String columnName, PDataType columnType,
@@ -250,6 +253,19 @@ public class CDCTableInfo {
                         ByteStringer.wrap(column.getColumnQualifierBytes()));
             }
             return builder.build();
+        }
+
+        public String getColumnDisplayName(CDCTableInfo tableInfo) {
+            if (columnDisplayName == null) {
+                // Don't include Column Family if it is a default column Family
+                if (Arrays.equals(getColumnFamily(), tableInfo.getDefaultColumnFamily())) {
+                    columnDisplayName = getColumnName();
+                } else {
+                    columnDisplayName = getColumnFamilyName()
+                            + NAME_SEPARATOR + getColumnName();
+                }
+            }
+            return columnDisplayName;
         }
     }
 }
