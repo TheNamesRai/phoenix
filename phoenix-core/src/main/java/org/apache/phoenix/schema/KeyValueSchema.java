@@ -143,6 +143,20 @@ public class KeyValueSchema extends ValueSchema {
         }
     }
 
+    public boolean extractValue(Tuple tuple, Expression expression,
+                                ImmutableBytesWritable ptr) {
+        List<Field> fields = getFields();
+        for (int i = 0; i < fields.size(); i++) {
+            Field field = fields.get(i);
+            for (int j = 0; j < field.getCount(); j++) {
+                if (expression.evaluate(tuple, ptr) && ptr.getLength() > 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private int getVarLengthBytes(int length) {
         return length + WritableUtils.getVIntSize(length);
     }

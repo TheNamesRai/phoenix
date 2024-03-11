@@ -1053,7 +1053,8 @@ public class CDCQueryIT extends CDCBaseIT {
             };
             PreparedStatement stmt = conn.prepareStatement(sel_sql);
             // For debug: uncomment to see the exact results logged to console.
-            //System.out.println("----- ts1: " + ts1 + " ts2: " + ts2 + " ts3: " + ts3 + " ts4: " + ts4);
+            //System.out.println("----- ts1: " + ts1 + " ts2: " + ts2 + " ts3: " + ts3 + " ts4: " +
+            //        ts4);
             //for (int i = 0; i < testDataSets.length; ++i) {
             //    Object[] testData = (Object[]) testDataSets[i];
             //    stmt.setTimestamp(1, (Timestamp) testData[0]);
@@ -1061,7 +1062,8 @@ public class CDCQueryIT extends CDCBaseIT {
             //    try (ResultSet rs = stmt.executeQuery()) {
             //        System.out.println("----- Test data set: " + i);
             //        while (rs.next()) {
-            //            System.out.println("----- " + rs.getString(1) + " " + rs.getInt(2) + " "  + rs.getString(3));
+            //            System.out.println("----- " + rs.getString(1) + " " +
+            //                    rs.getInt(2) + " "  + rs.getString(3));
             //        }
             //    }
             //}
@@ -1303,5 +1305,4 @@ public class CDCQueryIT extends CDCBaseIT {
             // this is expected
         }
     }
-
 }
