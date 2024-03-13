@@ -32,6 +32,7 @@ import org.apache.hadoop.hbase.regionserver.RegionScanner;
 import org.apache.phoenix.coprocessor.generated.CDCInfoProtos;
 import org.apache.phoenix.execute.TupleProjector;
 import org.apache.phoenix.expression.Expression;
+import org.apache.phoenix.expression.SingleCellColumnExpression;
 import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
 import org.apache.phoenix.index.CDCTableInfo;
 import org.apache.phoenix.index.IndexMaintainer;
@@ -106,14 +107,14 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
             ImmutableBytesPtr dataRowKey = new ImmutableBytesPtr(
                     indexToDataRowKeyMap.get(indexRowKey));
             Result dataRow = dataRows.get(dataRowKey);
-            Long indexCellTS = firstIndexCell.getTimestamp();
+            Long changeTS = firstIndexCell.getTimestamp();
             TupleProjector dataTableProjector = cdcDataTableInfo.getDataTableProjector();
             Expression[] expressions = dataTableProjector != null ?
                     dataTableProjector.getExpressions() : null;
             boolean isSingleCell = dataTableProjector != null;
             byte[] emptyCQ = EncodedColumnsUtil.getEmptyKeyValueInfo(
                     cdcDataTableInfo.getQualifierEncodingScheme()).getFirst();
-            changeBuilder.initChange(indexCellTS);
+            changeBuilder.initChange(changeTS);
             try {
                 if (dataRow != null) {
                     int curColumnNum = 0;
@@ -127,9 +128,9 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
                         byte[] cellFam = ImmutableBytesPtr.cloneCellFamilyIfNecessary(cell);
                         byte[] cellQual = ImmutableBytesPtr.cloneCellQualifierIfNecessary(cell);
                         if (cell.getType() == Cell.Type.DeleteFamily) {
-                            if (indexCellTS == cell.getTimestamp()) {
+                            if (changeTS == cell.getTimestamp()) {
                                 changeBuilder.markAsDeletionEvent();
-                            } else if (indexCellTS > cell.getTimestamp()
+                            } else if (changeTS > cell.getTimestamp()
                                     && changeBuilder.getLastDeletedTimestamp() == 0L) {
                                 // Cells with timestamp less than the lowerBoundTsForPreImage
                                 // can not be part of the PreImage as there is a Delete Family
@@ -145,12 +146,10 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
                             }
                             // In this case, cell is the row, meaning we loop over rows..
                             if (isSingleCell) {
-                                ResultTuple rowTuple = new ResultTuple(Result.create(
-                                                Collections.singletonList(cell)));
                                 while (curColumnNum < cdcColumnInfoList.size()) {
-                                    boolean hasValue = dataTableProjector.getSchema().
-                                            extractValue(rowTuple, expressions[curColumnNum],
-                                                    ptr);
+                                    boolean hasValue = dataTableProjector.getSchema().extractValue(
+                                            cell, (SingleCellColumnExpression)
+                                                    expressions[curColumnNum], ptr);
                                     if (hasValue) {
                                         Object cellValue = getColumnValue(ptr.get(),
                                                 ptr.getOffset(), ptr.getLength(),
@@ -187,7 +186,7 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
                                 Object cellValue = getColumnValue(cell, cdcColumnInfoList
                                         .get(curColumnNum).getColumnType());
                                 changeBuilder.registerChange(cell, curColumnNum, cellValue);
-                                // Done processing the current column, look for other columns.
+                                // Done processing the current cell, check the next cell.
                                 break;
                             }
                         }

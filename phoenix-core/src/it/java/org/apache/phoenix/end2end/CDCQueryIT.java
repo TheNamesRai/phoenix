@@ -20,6 +20,7 @@ package org.apache.phoenix.end2end;
 import com.google.gson.Gson;
 import org.apache.phoenix.execute.DescVarLengthFastByteComparisons;
 import org.apache.phoenix.hbase.index.IndexRegionObserver;
+import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.util.CDCUtil;
 import org.apache.phoenix.util.EnvironmentEdgeManager;
@@ -82,6 +83,7 @@ public class CDCQueryIT extends CDCBaseIT {
     private final Integer tableSaltBuckets;
     private final boolean withSchemaName;
     private ManualEnvironmentEdge injectEdge;
+    private Gson gson = new Gson();
 
     public CDCQueryIT(Boolean forView, Boolean dataFirst,
                       PTable.QualifierEncodingScheme encodingScheme, boolean multitenant,
@@ -204,7 +206,6 @@ public class CDCQueryIT extends CDCBaseIT {
 
     private void assertResultSet(ResultSet rs, Set<PTable.CDCChangeScope> cdcChangeScopeSet)
             throws Exception{
-        Gson gson = new Gson();
         assertEquals(true, rs.next());
         assertEquals(1, rs.getInt(1 + COL_OFFSET));
         Map<String, Object> row1 = new HashMap<String, Object>(){{
@@ -583,6 +584,9 @@ public class CDCQueryIT extends CDCBaseIT {
                         " ORDER BY PHOENIX_ROW_TIMESTAMP() DESC",
                         new int[]{1, 1, 1, 1, 2, 1, 1, 1, 1, 3, 2, 1});
             }};
+            Map dummyChange = new HashMap() {{
+                put(CDC_EVENT_TYPE, "dummy");
+            }};
             for (Map.Entry<String, int[]> testQuery : testQueries.entrySet()) {
                 try (ResultSet rs = conn.createStatement().executeQuery(testQuery.getKey())) {
                     for (int i = 0; i < testQuery.getValue().length; ++i) {
@@ -590,7 +594,11 @@ public class CDCQueryIT extends CDCBaseIT {
                         assertEquals(true, rs.next());
                         assertEquals("Index: " + i + " for query: " + testQuery.getKey(),
                                 k, rs.getInt(2));
-                        //assertEquals("{}", rs.getString(3));
+                        Map change = gson.fromJson(rs.getString(3), HashMap.class);
+                        change.put(CDC_EVENT_TYPE, "dummy");
+                        // Verify that we are getting nothing but the event type as we specified
+                        // no change scopes.
+                        assertEquals(dummyChange, change);
                     }
                     assertEquals(false, rs.next());
                 }
@@ -654,7 +662,6 @@ public class CDCQueryIT extends CDCBaseIT {
     private void assertResultSetImmutableTable(ResultSet rs,
                                                Set<PTable.CDCChangeScope> cdcChangeScopeSet)
             throws Exception{
-        Gson gson = new Gson();
         assertEquals(true, rs.next());
         assertEquals(1, rs.getInt(1 + COL_OFFSET));
         Map<String, Object> row1 = new HashMap<String, Object>(){{
@@ -1171,7 +1178,6 @@ public class CDCQueryIT extends CDCBaseIT {
         assertEquals(true, rs.next());
         assertEquals(1, rs.getInt(1 + COL_OFFSET));
 
-        Gson gson = new Gson();
         Map<String, Object> row1 = new HashMap<String, Object>(){{
             put(CDC_EVENT_TYPE, CDC_UPSERT_EVENT_TYPE);
         }};
