@@ -573,13 +573,13 @@ public class CDCQueryIT extends CDCBaseIT {
                     new HashSet<>(Arrays.asList(PTable.CDCChangeScope.CHANGE)));
 
             HashMap<String, int[]> testQueries = new HashMap<String, int[]>() {{
-                put("SELECT 'dummy', k FROM " + cdcFullName,
+                put("SELECT 'dummy', k, \"CDC JSON\" FROM " + cdcFullName,
                         new int[]{1, 2, 3, 1, 1, 1, 1, 2, 1, 1, 1, 1});
-                put("SELECT PHOENIX_ROW_TIMESTAMP(), k FROM " + cdcFullName +
+                put("SELECT PHOENIX_ROW_TIMESTAMP(), k, \"CDC JSON\" FROM " + cdcFullName +
                         " ORDER BY k ASC", new int[]{1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3});
-                put("SELECT PHOENIX_ROW_TIMESTAMP(), k FROM " + cdcFullName +
+                put("SELECT PHOENIX_ROW_TIMESTAMP(), k, \"CDC JSON\" FROM " + cdcFullName +
                         " ORDER BY k DESC", new int[]{3, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1});
-                put("SELECT PHOENIX_ROW_TIMESTAMP(), k FROM " + cdcFullName +
+                put("SELECT PHOENIX_ROW_TIMESTAMP(), k, \"CDC JSON\" FROM " + cdcFullName +
                         " ORDER BY PHOENIX_ROW_TIMESTAMP() DESC",
                         new int[]{1, 1, 1, 1, 2, 1, 1, 1, 1, 3, 2, 1});
             }};
@@ -590,6 +590,7 @@ public class CDCQueryIT extends CDCBaseIT {
                         assertEquals(true, rs.next());
                         assertEquals("Index: " + i + " for query: " + testQuery.getKey(),
                                 k, rs.getInt(2));
+                        //assertEquals("{}", rs.getString(3));
                     }
                     assertEquals(false, rs.next());
                 }
