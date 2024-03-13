@@ -35,9 +35,9 @@ import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
 import org.apache.phoenix.index.CDCTableInfo;
 import org.apache.phoenix.index.IndexMaintainer;
-import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.schema.tuple.ResultTuple;
 import org.apache.phoenix.schema.types.PDataType;
+import org.apache.phoenix.util.CDCChangeBuilder;
 import org.apache.phoenix.util.CDCUtil;
 import org.apache.phoenix.util.EncodedColumnsUtil;
 import org.apache.phoenix.util.IndexUtil;
@@ -51,18 +51,9 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 import static org.apache.phoenix.coprocessor.BaseScannerRegionObserver.CDC_DATA_TABLE_DEF;
-import static org.apache.phoenix.query.QueryConstants.CDC_DELETE_EVENT_TYPE;
-import static org.apache.phoenix.query.QueryConstants.CDC_EVENT_TYPE;
-import static org.apache.phoenix.query.QueryConstants.CDC_PRE_IMAGE;
-import static org.apache.phoenix.query.QueryConstants.CDC_CHANGE_IMAGE;
-import static org.apache.phoenix.query.QueryConstants.CDC_POST_IMAGE;
-import static org.apache.phoenix.query.QueryConstants.CDC_UPSERT_EVENT_TYPE;
 import static org.apache.phoenix.util.ByteUtil.EMPTY_BYTE_ARRAY;
 
 public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScanner {
@@ -157,15 +148,13 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
                                 ResultTuple rowTuple = new ResultTuple(Result.create(
                                                 Collections.singletonList(cell)));
                                 while (curColumnNum < cdcColumnInfoList.size()) {
-                                    CDCTableInfo.CDCColumnInfo currentColumnInfo =
-                                            cdcColumnInfoList.get(curColumnNum);
                                     boolean hasValue = dataTableProjector.getSchema().
                                             extractValue(rowTuple, expressions[curColumnNum],
                                                     ptr);
                                     if (hasValue) {
                                         Object cellValue = getColumnValue(ptr.get(),
                                                 ptr.getOffset(), ptr.getLength(),
-                                                currentColumnInfo.getColumnType());
+                                                cdcColumnInfoList.get(curColumnNum).getColumnType());
                                         changeBuilder.registerChange(cell, curColumnNum, cellValue);
                                     }
                                     ++curColumnNum;
@@ -283,129 +272,4 @@ public class CDCGlobalIndexRegionScanner extends UncoveredGlobalIndexRegionScann
         }
     }
 
-    public static class CDCChangeBuilder {
-        private final boolean isChangeImageInScope;
-        private final boolean isPreImageInScope;
-        private final boolean isPostImageInScope;
-        private final CDCTableInfo cdcDataTableInfo;
-        private String changeType;
-        private long lastDeletedTimestamp;
-        private long changeTimestamp;
-        private Map<String, Object> preImageObj = null;
-        private Map<String, Object> changeImageObj = null;
-
-        public CDCChangeBuilder(CDCTableInfo cdcDataTableInfo) {
-            this.cdcDataTableInfo = cdcDataTableInfo;
-            Set<PTable.CDCChangeScope> changeScopes = cdcDataTableInfo.getIncludeScopes();
-            // FIXME: The below boolean flags should probably be translated to util methods on
-            //  the Enum class itself.
-            isChangeImageInScope = changeScopes.contains(PTable.CDCChangeScope.CHANGE);
-            isPreImageInScope = changeScopes.contains(PTable.CDCChangeScope.PRE);
-            isPostImageInScope = changeScopes.contains(PTable.CDCChangeScope.POST);
-        }
-
-        public void initChange(long ts) {
-            changeTimestamp = ts;
-            changeType = null;
-            lastDeletedTimestamp = 0L;
-            if (isPreImageInScope || isPostImageInScope) {
-                preImageObj = new HashMap<>();
-            }
-            if (isChangeImageInScope || isPostImageInScope) {
-                changeImageObj = new HashMap<>();
-            }
-        }
-
-        public long getChangeTimestamp() {
-            return changeTimestamp;
-        }
-
-        public Map<String, Object> getChangeImageObj() {
-            return changeImageObj;
-        }
-
-        public Map<String, Object> getPreImageObj() {
-            return preImageObj;
-        }
-
-        public boolean isDeletionEvent() {
-            return changeType == CDC_DELETE_EVENT_TYPE;
-        }
-
-        public boolean isNonEmptyEvent() {
-            return changeType != null;
-        }
-
-        public void markAsDeletionEvent() {
-            changeType = CDC_DELETE_EVENT_TYPE;
-        }
-
-        public long getLastDeletedTimestamp() {
-            return lastDeletedTimestamp;
-        }
-
-        public void setLastDeletedTimestamp(long lastDeletedTimestamp) {
-            this.lastDeletedTimestamp = lastDeletedTimestamp;
-        }
-
-        public boolean isChangeRelevant(Cell cell) {
-            if (cell.getTimestamp() > changeTimestamp) {
-                return false;
-            }
-            if (cell.getType() != Cell.Type.DeleteFamily && ! isOlderThanChange(cell) &&
-                    isDeletionEvent()) {
-                // We don't need to build the change image in this case.
-                return false;
-            }
-            return true;
-        }
-
-        public void registerChange(Cell cell, int columnNum, Object value) {
-            if (!isChangeRelevant(cell)) {
-                return;
-            }
-            CDCTableInfo.CDCColumnInfo columnInfo =
-                    cdcDataTableInfo.getColumnInfoList().get(columnNum);
-            String cdcColumnName = columnInfo.getColumnDisplayName(cdcDataTableInfo);
-            if (isOlderThanChange(cell)) {
-                if ((isPreImageInScope || isPostImageInScope) &&
-                        ! preImageObj.containsKey(cdcColumnName)) {
-                    preImageObj.put(cdcColumnName, value);
-                }
-            } else if (cell.getTimestamp() == changeTimestamp) {
-                assert !isDeletionEvent() : "Not expected to find a change for delete event";
-                changeType = CDC_UPSERT_EVENT_TYPE;
-                if (isChangeImageInScope || isPostImageInScope) {
-                    changeImageObj.put(cdcColumnName, value);
-                }
-            }
-        }
-
-        public Map buildCDCEvent() {
-            Map<String, Object> rowValueMap = new HashMap<>();
-            if (isPreImageInScope) {
-                rowValueMap.put(CDC_PRE_IMAGE, preImageObj);
-            }
-            if (isChangeImageInScope) {
-                rowValueMap.put(CDC_CHANGE_IMAGE, changeImageObj);
-            }
-            if (isPostImageInScope) {
-                Map<String, Object> postImageObj = new HashMap<>();
-                if (!isDeletionEvent()) {
-                    postImageObj.putAll(preImageObj);
-                    postImageObj.putAll(changeImageObj);
-                }
-                rowValueMap.put(CDC_POST_IMAGE, postImageObj);
-            }
-            if (changeType != null) {
-                rowValueMap.put(CDC_EVENT_TYPE, changeType);
-            }
-            return rowValueMap;
-        }
-
-        public boolean isOlderThanChange(Cell cell) {
-            return (cell.getTimestamp() < changeTimestamp &&
-                    cell.getTimestamp() > lastDeletedTimestamp) ? true: false;
-        }
-    }
 }
