@@ -621,6 +621,13 @@ public class CompactionScanner implements InternalScanner {
       if (tableList != null && !tableList.isEmpty()) {
         tableList.forEach(m -> {
           if (!m.getTTL().equals(TTL_EXPRESSION_NOT_DEFINED)) {
+            // Defense in depth: a view/index with a TTL but a null/empty ROW_KEY_MATCHER would NPE in
+            // RowKeyMatcher.put (key.length on a null key) and abort the entire major compaction. Skip
+            // it so one such view cannot suppress TTL enforcement for every co-located view.
+            if (m.getMatchPattern() == null || m.getMatchPattern().length == 0) {
+              LOGGER.warn("Skipping {} entry with a TTL but null/empty ROW_KEY_MATCHER: {}", type, m);
+              return;
+            }
             // add the ttlInfo to the cache.
             // each new/unique ttlInfo object added returns a unique tableId.
             int tableId = -1;
@@ -690,6 +697,13 @@ public class CompactionScanner implements InternalScanner {
       if (tableList != null && !tableList.isEmpty()) {
         tableList.forEach(m -> {
           if (!m.getTTL().equals(TTL_EXPRESSION_NOT_DEFINED)) {
+            // Defense in depth: a view/index with a TTL but a null/empty ROW_KEY_MATCHER would NPE in
+            // RowKeyMatcher.put (key.length on a null key) and abort the entire major compaction. Skip
+            // it so one such view cannot suppress TTL enforcement for every co-located view.
+            if (m.getMatchPattern() == null || m.getMatchPattern().length == 0) {
+              LOGGER.warn("Skipping {} entry with a TTL but null/empty ROW_KEY_MATCHER: {}", type, m);
+              return;
+            }
             // add the ttlInfo to the cache.
             // each new/unique ttlInfo object added returns a unique tableId.
             int tableId = -1;
@@ -933,15 +947,31 @@ public class CompactionScanner implements InternalScanner {
       if (viewSet.size() == 0) {
         return;
       }
-      String viewsClause = new StringBuilder(viewSet.stream()
-        .map((v) -> String.format("(%s, %s,'%s')", Bytes.toString(v.getTenantId()),
-          Bytes.toString(v.getSchemaName()), Bytes.toString(v.getTableName())))
-        .collect(Collectors.joining(","))).toString();
+      // Build a PARAMETERIZED IN-list -- one (?, ?, ?) row-value tuple per view -- and bind each
+      // view's (TENANT_ID, TABLE_SCHEM, TABLE_NAME) as data rather than concatenating the
+      // identifiers into the SQL text. View identifiers are stored raw in SYSTEM.CATALOG, so one
+      // that contains a character such as a single quote would otherwise break this lookup or make
+      // it match the wrong rows. Binding reproduces the previous NULL-keyword-vs-quoted rendering
+      // exactly (see getGlobalViews / getNextTenantViews), so the set of legitimately matched
+      // views is unchanged.
+      List<TableInfo> orderedViews = new ArrayList<>(viewSet);
+      String viewsClause =
+        orderedViews.stream().map(v -> "(?, ?, ?)").collect(Collectors.joining(","));
       String viewsWithTTLSQL = "SELECT TENANT_ID, TABLE_SCHEM, TABLE_NAME, "
         + "TTL, ROW_KEY_MATCHER " + "FROM SYSTEM.CATALOG " + "WHERE TABLE_TYPE = 'v' AND "
-        + "(TENANT_ID, TABLE_SCHEM, TABLE_NAME) IN " + "(" + viewsClause.toString() + ")";
+        + "(TENANT_ID, TABLE_SCHEM, TABLE_NAME) IN " + "(" + viewsClause + ")";
       if (LOGGER.isTraceEnabled()) {
         LOGGER.trace(String.format("ViewsWithTTLSQL : %s", viewsWithTTLSQL));
+      }
+
+      // The (tenant, schema, name) triples we may legitimately honor for THIS physical table are
+      // exactly the views getGlobalViews / getNextTenantViews linked to it. Any returned row not in
+      // this set is not a child of the table being compacted and must not lend it a TTL /
+      // ROW_KEY_MATCHER (defense in depth behind the parameterized query above).
+      Set<TableInfo> allowedViews = new HashSet<>();
+      for (TableInfo v : orderedViews) {
+        allowedViews.add(canonicalView(unquoteCatalogLiteral(v.getTenantId()),
+          unquoteCatalogLiteral(v.getSchemaName()), Bytes.toString(v.getTableName())));
       }
 
       try (Connection serverConnection =
@@ -950,11 +980,28 @@ public class CompactionScanner implements InternalScanner {
         try (PhoenixPreparedStatement viewTTLStmt = serverConnection
           .prepareStatement(viewsWithTTLSQL).unwrap(PhoenixPreparedStatement.class)) {
 
+          int paramIndex = 1;
+          for (TableInfo v : orderedViews) {
+            bindCatalogLiteralOrNull(viewTTLStmt, paramIndex++, v.getTenantId());
+            bindCatalogLiteralOrNull(viewTTLStmt, paramIndex++, v.getSchemaName());
+            // Bind the view NAME as data so a quote in the identifier cannot alter the query.
+            viewTTLStmt.setString(paramIndex++, Bytes.toString(v.getTableName()));
+          }
+
           try (ResultSet viewTTLRS = viewTTLStmt.executeQuery()) {
             while (viewTTLRS.next()) {
               String tid = viewTTLRS.getString("TENANT_ID");
               String schem = viewTTLRS.getString("TABLE_SCHEM");
               String tName = viewTTLRS.getString("TABLE_NAME");
+
+              // Provenance check: drop any returned row that is not one of the views we
+              // queried for this physical table (belt-and-suspenders behind the binding).
+              if (!allowedViews.contains(canonicalView(tid == null || tid.isEmpty() ? null : tid,
+                schem == null || schem.isEmpty() ? null : schem, tName))) {
+                LOGGER.warn("Skipping SYSTEM.CATALOG row not provably a view of compacted table {}: "
+                  + "({}, {}, {})", physicalTableName, tid, schem, tName);
+                continue;
+              }
               String viewTTLStr = viewTTLRS.getString("TTL");
               TTLExpression viewTTL = viewTTLStr == null || viewTTLStr.isEmpty()
                 ? TTL_EXPRESSION_NOT_DEFINED
@@ -1011,6 +1058,48 @@ public class CompactionScanner implements InternalScanner {
           }
         }
       }
+    }
+
+    /**
+     * Reverses the SQL-literal rendering that {@link #getGlobalViews} / {@link #getNextTenantViews}
+     * apply to a catalog identifier: the sentinel {@code NULL} (or empty) becomes {@code null}, and a
+     * single-quote-wrapped {@code 'value'} becomes its raw interior {@code value}. Used both to bind
+     * the parameterized lookup and to build the provenance key, so the two stay consistent.
+     */
+    private String unquoteCatalogLiteral(byte[] storedLiteral) {
+      String s = Bytes.toString(storedLiteral);
+      if (s == null || s.isEmpty() || "NULL".equals(s)) {
+        return null;
+      }
+      if (s.length() >= 2 && s.charAt(0) == '\'' && s.charAt(s.length() - 1) == '\'') {
+        s = s.substring(1, s.length() - 1);
+      }
+      return s;
+    }
+
+    /**
+     * Binds a catalog identifier for the parameterized IN-list, reproducing the previous rendering: a
+     * {@code null}/{@code NULL} value is bound as SQL NULL just as the old code inlined a bare NULL
+     * keyword, so the set of matched global/tenant views is unchanged; otherwise as a string literal.
+     */
+    private void bindCatalogLiteralOrNull(PhoenixPreparedStatement stmt, int pos, byte[] storedLiteral)
+      throws SQLException {
+      String raw = unquoteCatalogLiteral(storedLiteral);
+      if (raw == null) {
+        stmt.setNull(pos, Types.VARCHAR);
+      } else {
+        stmt.setString(pos, raw);
+      }
+    }
+
+    /**
+     * Canonical {@link TableInfo} for the provenance check, comparing (tenant, schema, name) as three
+     * independent byte fields (TableInfo.equals) so there is no delimiter-collision risk. A
+     * {@code null} field means "absent" and matches only another absent field.
+     */
+    private TableInfo canonicalView(String tenantId, String schema, String name) {
+      return new TableInfo(tenantId == null ? null : Bytes.toBytes(tenantId),
+        schema == null ? null : Bytes.toBytes(schema), name == null ? null : Bytes.toBytes(name));
     }
 
     public boolean isSharedIndex() {
